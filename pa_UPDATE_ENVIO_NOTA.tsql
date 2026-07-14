@@ -1,0 +1,58 @@
+CREATE   PROCEDURE  [dbo].[pa_UPDATE_ENVIO_NOTA]  
+    @S_CLA_CODIGO               VARCHAR(20),  
+    @N_NOTA_ID                  INT,  
+    @audit_usuario_creacion     VARCHAR(150) = NULL,  
+    @audit_usuario_modificacion VARCHAR(150) = NULL  
+AS  
+BEGIN  
+    SET NOCOUNT ON;  
+  
+    DECLARE @usuario_creacion VARCHAR(150) =  
+        ISNULL(NULLIF(LTRIM(RTRIM(@audit_usuario_creacion)), ''), 'SISTEMA');  
+  
+    DECLARE @usuario_modificacion VARCHAR(150) =  
+        ISNULL(NULLIF(LTRIM(RTRIM(@audit_usuario_modificacion)), ''), @usuario_creacion);  
+  
+    BEGIN TRAN;  
+    BEGIN TRY  
+        IF NOT EXISTS (  
+            SELECT 1  
+            FROM dbo.clase_nota_enviado  
+            WHERE s_cla_codigo = @S_CLA_CODIGO  
+              AND n_nota_id = @N_NOTA_ID  
+        )  
+        BEGIN  
+            INSERT INTO dbo.clase_nota_enviado  
+            (  
+                s_cla_codigo,  
+                n_nota_id,  
+                b_clnoen_estado_enviado,  
+                d_clnoen_fecha_creacion,  
+                audit_usuario_creacion,  
+                audit_fecha_creacion  
+            )  
+            VALUES  
+            (@S_CLA_CODIGO, @N_NOTA_ID, 1, dbo.GetFechaPeru(), @usuario_creacion, dbo.GetFechaPeru());  
+        END  
+        ELSE  
+        BEGIN  
+            UPDATE dbo.clase_nota_enviado  
+            SET b_clnoen_estado_enviado = 1,  
+                audit_usuario_modificacion = @usuario_modificacion,  
+                audit_fecha_modificacion = dbo.GetFechaPeru()  
+            WHERE s_cla_codigo = @S_CLA_CODIGO  
+              AND n_nota_id = @N_NOTA_ID;  
+        END;  
+        COMMIT TRAN;  
+    END TRY  
+    BEGIN CATCH  
+        ROLLBACK TRAN;  
+        DECLARE @ErrorMessage NVARCHAR(4000);  
+        DECLARE @ErrorSeverity INT;  
+        DECLARE @ErrorState INT;  
+        SELECT @ErrorMessage = ERROR_MESSAGE(),  
+               @ErrorSeverity = ERROR_SEVERITY(),  
+               @ErrorState = ERROR_STATE();  
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);  
+    END CATCH  
+END;  

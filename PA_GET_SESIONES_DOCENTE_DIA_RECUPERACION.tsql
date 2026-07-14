@@ -1,0 +1,220 @@
+CREATE   PROCEDURE  [dbo].[PA_GET_SESIONES_DOCENTE_DIA_RECUPERACION]    
+    @S_TRA_CODIGO VARCHAR(20)--,    
+    --@N_HOR_DIA INT    
+AS    
+BEGIN    
+    SET NOCOUNT ON    
+    SET DATEFORMAT YMD    
+    SET DATEFIRST 1    
+    
+    DECLARE @fecha DATETIME    
+    DECLARE @dia INT    
+    
+    SET @fecha = CONVERT(VARCHAR(10),dbo.GetFechaPeru(),121)    
+    SET @dia = DATEPART(DW,@fecha)    
+    
+    DECLARE @THORARIO TABLE (    
+        ID INT IDENTITY,    
+        S_CUR_CODIGO VARCHAR(20),    
+        S_CUR_NOMBRE VARCHAR(250),    
+        S_CLA_CODIGO VARCHAR(40),    
+        S_DEP_CODIGO VARCHAR(10),    
+  S_DEP_NOMBRE VARCHAR(250),    
+        S_SED_CODIGO VARCHAR(10),    
+        S_SEM_CODIGO VARCHAR(10),    
+        S_CLDO_TIPO VARCHAR(1),    
+        D_HOR_INICIO DATETIME,    
+        D_HOR_FINAL DATETIME,    
+        S_AUL_CODIGO VARCHAR(10),    
+        COMPARTIDA BIT,    
+        N_HOR_MINUTOS INT,    
+        BD_ORIGEN VARCHAR(20),    
+        S_CLA_LST_CRUZADA VARCHAR(10),    
+  S_SES_TIPO VARCHAR(20)    
+    )    
+    
+ INSERT INTO @THORARIO    
+    SELECT    
+        SC.s_cur_codigo,    
+        CU.s_cur_nombre,    
+        SC.s_cla_codigo,    
+        --CAR.s_car_nombre,    
+  SC.s_dep_codigo,    
+  SC.s_dep_nombre,    
+        SD.s_sed_codigo,    
+        SE.s_sem_codigo,    
+        SC.s_tipo_docente,    
+        DATEADD(DAY,DATEDIFF(DAY,SC.d_hor_inicio,@fecha),SC.d_hor_inicio),    
+        DATEADD(DAY,DATEDIFF(DAY,SC.d_hor_final,@fecha),SC.d_hor_final),    
+        SC.s_aul_codigo,    
+        0,    
+        SC.n_hor_minutos,    
+        'BD_UPNSAC',    
+        SC.s_cla_lst_cruzada,    
+  SC.s_tipo_reunion    
+    FROM V_SESIONES_CLASE SC    
+   INNER JOIN semestre SE ON SE.n_semestre_id = SC.n_semestre_id --*AND @fecha BETWEEN SE.d_sem_fcontrolasis AND SE.d_sem_ffincontrolasis AND SE.n_sem_estado = 1    
+   INNER JOIN sede SD ON SD.n_sede_id = SE.n_sede_id    
+   --INNER JOIN carrera CAR ON CAR.s_car_codigo = SC.s_car_codigo    
+   INNER JOIN Curso CU ON CU.s_cur_codigo = SC.s_cur_codigo --*AND CU.N_SEDE_ID = SD.N_SEDE_ID    
+    WHERE SC.s_tra_codigo = @S_TRA_CODIGO    
+   AND SC.n_hor_dia = @dia    
+   --AND SC.s_cla_cierre_academico = 'A'    
+   AND SC.s_tipo_reunion IN ('RE','AD')    
+    GROUP BY    
+        SC.s_cur_codigo,    
+        CU.s_cur_nombre,    
+        SC.s_cla_codigo,    
+        --CAR.s_car_nombre,    
+  SC.s_dep_codigo,    
+  SC.s_dep_nombre,    
+        SD.s_sed_codigo,    
+        SE.s_sem_codigo,    
+        SC.s_tipo_docente,    
+        SC.d_hor_inicio,    
+        SC.d_hor_final,    
+        SC.s_aul_codigo,    
+        SC.n_hor_minutos,    
+        SC.s_cla_lst_cruzada,    
+  SC.s_tipo_reunion    
+    ORDER BY CAST(SC.S_CLA_CODIGO AS BIGINT)    
+    
+ -- UPNSAC    
+ /*INSERT INTO @THORARIO    
+ select H.s_cur_codigo,CUR.s_cur_nombre,H.s_cla_codigo,CAR.s_car_nombre,SED.s_sed_codigo,S.s_sem_codigo,H.s_tipo_docente    
+ ,dateadd(day,datediff(day,H.d_hor_inicio,@fecha),H.d_hor_inicio) , dateadd(day,datediff(day,H.d_hor_fin,@fecha),H.d_hor_fin),H.s_aul_codigo,0,H.n_hor_minutos,'BD_UPNSAC',H.s_cla_lst_cruzada    
+ from V_SESIONES_CLASE H    
+ inner join Curso CUR on CUR.s_cur_codigo=H.s_cur_codigo    
+ inner join carrera CAR on CAR.s_car_codigo=H.s_car_codigo    
+ inner join semestre S on S.n_semestre_id=H.n_semestre_id and (@fecha between S.d_sem_fcontrolasis and S.d_sem_ffincontrolasis) and S.n_sem_estado=1    
+ inner join sede SED on SED.n_sede_id=S.n_sede_id    
+ where    
+ CUR.N_SEDE_ID = SED.N_SEDE_ID    
+ and H.s_tra_codigo=@S_TRA_CODIGO    
+ and H.n_hor_dia=@dia    
+ --and H.s_clase_tipo<>'VT'    
+ --and (H.s_clase_tipo<>'VT' and (H.s_clase_tipo<>'BL' or H.S_AUL_CODIGO not LIKE 'VIR%'))  -- se quito la restriccion para mostrar clases virtuales con horario    
+ and H.s_cla_cierre_academico='A'    
+ --AND NOT EXISTS (select * from recuperacion r    
+ --inner join hora h1 on r.n_hora_id_prog_inicial = h1.n_hora_id    
+ --inner join hora h2 on r.n_hora_id_prog_fin = h2.n_hora_id    
+ --where    
+ --r.s_cla_codigo = H.s_cla_codigo    
+ --and r.s_tra_codigo = H.s_tra_codigo    
+ --and CONVERT(DATE,r.d_rec_fecha_perdida) = convert(DATE,dateadd(day,datediff(day,H.d_hor_inicio,@fecha),H.d_hor_inicio))    
+ --and h1.n_hor_codigo = H.n_hor_codigo_inicio    
+ --and h2.n_hor_codigo = H.n_hor_codigo_fin    
+ --and r.s_rec_estado in ('I', 'P', 'E')    
+ --)    
+ group by H.s_cur_codigo,CUR.s_cur_nombre,H.s_cla_codigo,CAR.s_car_nombre,SED.s_sed_codigo,S.s_sem_codigo,H.s_tipo_docente,H.d_hor_inicio,d_hor_fin,H.s_aul_codigo,H.n_hor_minutos,H.s_cla_lst_cruzada    
+ order by CAST(H.S_CLA_CODIGO as bigint)*/    
+    
+ -- EPEC    
+ /*INSERT INTO @THORARIO    
+ select H.s_cur_codigo,CUR.s_cur_nombre,H.s_cla_codigo,CAR.s_car_nombre,SED.s_sed_codigo,S.s_sem_codigo,H.s_tipo_docente    
+ ,dateadd(day,datediff(day,H.d_hor_inicio,@fecha),H.d_hor_inicio) , dateadd(day,datediff(day,H.d_hor_fin,@fecha),H.d_hor_fin),H.s_aul_codigo,0,H.n_hor_minutos,'BD_EPEC',H.s_cla_lst_cruzada    
+ from BD_EPEC_DES1.dbo.V_SESIONES_CLASE H    
+ inner join BD_EPEC_DES1.dbo.carrera CAR on CAR.s_car_codigo=H.s_car_codigo and CAR.n_car_estado='1'    
+ inner join BD_EPEC_DES1.dbo.semestre S on S.n_semestre_id=H.n_semestre_id and S.n_sem_estado='1'    
+ inner join BD_EPEC_DES1.dbo.sede SED on SED.n_sede_id=S.n_sede_id    
+ inner join BD_EPEC_DES1.dbo.curso CUR on CUR.s_cur_codigo=H.s_cur_codigo and (CUR.s_car_codigo = CAR.S_CAR_CODIGO or CUR.s_car_codigo='0')    
+ where    
+ (CUR.n_sede_id=SED.n_sede_id or CUR.n_sede_id='0')    
+ and H.s_tra_codigo=@S_TRA_CODIGO    
+ and H.n_hor_dia=@dia    
+ and H.s_clase_tipo<>'VT'    
+ and exists (select 1    
+    from BD_EPEC_DES1.dbo.horario hor    
+    where hor.s_cla_codigo = H.s_cla_codigo AND    
+    @fecha between hor.d_hor_fecha AND isnull(hor.d_hor_fecha_fin,hor.d_hor_fecha) AND    
+    H.s_aul_codigo = HOR.s_aul_codigo) -- Para casos donde se dicta en diferentes aulas según la fecha programada    
+ group by H.s_cur_codigo,CUR.s_cur_nombre,H.s_cla_codigo,CAR.s_car_nombre,SED.s_sed_codigo,S.s_sem_codigo,H.s_tipo_docente,H.d_hor_inicio,d_hor_fin,H.s_aul_codigo,H.n_hor_minutos,H.s_cla_lst_cruzada    
+ order by H.S_CLA_CODIGO*/    
+    
+ -- Eliminamos clases que tengan programación de fechas, pero no para hoy    
+    DELETE C    
+    FROM @THORARIO C    
+   LEFT JOIN horario_clase HC ON C.s_cla_codigo = HC.s_cla_codigo --*AND HC.d_hocl_fecha = @fecha    
+    WHERE HC.s_cla_codigo IS NULL    
+   AND EXISTS (SELECT 1 FROM horario_clase WHERE s_cla_codigo = C.s_cla_codigo)    
+    
+ -- Eliminamos clases que esten programados en feriados                
+    DELETE T    
+    FROM @THORARIO T    
+   INNER JOIN sede SED ON T.S_SED_CODIGO = SED.s_sed_codigo    
+   --*INNER JOIN Feriado F ON SED.n_sede_id = F.n_sede_id AND CAST(T.D_HOR_INICIO AS DATE) = F.d_fecha AND F.b_activo = 1    
+    
+ /*    
+ --Eliminamos la programación de clases que haya sido configurada para eliminar    
+ DELETE T from @THORARIO T    
+ inner join fechas_sin_programacion_clases F on T.S_SEM_CODIGO=F.s_sem_codigo and cast(T.D_HOR_INICIO as date)=F.d_fecha and F.b_activo=1    
+ */    
+    
+ -- Identifica las clase compartidas    
+    DECLARE @MIN INT = 1    
+    DECLARE @MAX INT = (SELECT MAX(ID) FROM @THORARIO)    
+    
+    WHILE @MIN <= @MAX    
+    BEGIN    
+        DECLARE @S_CLA_CODIGO VARCHAR(40)    
+        DECLARE @D_HOR_INICIO DATETIME    
+        DECLARE @S_CLA_LST_CRUZADA VARCHAR(20)    
+    
+        SELECT    
+            @S_CLA_CODIGO = S_CLA_CODIGO,    
+            @D_HOR_INICIO = D_HOR_INICIO,    
+            @S_CLA_LST_CRUZADA = S_CLA_LST_CRUZADA    
+        FROM @THORARIO    
+        WHERE ID = @MIN    
+    
+        UPDATE @THORARIO    
+        SET COMPARTIDA = 1    
+        WHERE S_CLA_CODIGO <> @S_CLA_CODIGO    
+    AND CAST(S_CLA_CODIGO AS BIGINT) > CAST(@S_CLA_CODIGO AS BIGINT)    
+    AND D_HOR_INICIO = @D_HOR_INICIO    
+    AND S_CLA_LST_CRUZADA = @S_CLA_LST_CRUZADA    
+    
+        SET @MIN = @MIN + 1    
+    END    
+     
+ -- Elimina horas identificadas como compartidas    
+    DELETE FROM @THORARIO    
+    WHERE COMPARTIDA = 1    
+    
+ -- Resultado final    
+    SELECT    
+        S_CUR_CODIGO,    
+      S_CUR_NOMBRE,    
+        S_CLA_CODIGO,    
+  S_DEP_CODIGO,    
+        S_DEP_NOMBRE,    
+        S_SED_CODIGO,    
+        S_SEM_CODIGO,    
+        S_CLDO_TIPO,    
+        D_HOR_INICIO,    
+        D_HOR_FINAL,    
+        S_AUL_CODIGO,    
+        N_HOR_MINUTOS,    
+        BD_ORIGEN,    
+  S_SES_TIPO    
+    FROM @THORARIO A    
+    WHERE A.D_HOR_FINAL >= dbo.GetFechaPeru()    
+   AND NOT EXISTS (    
+  SELECT 1    
+  FROM CONTROL_CLASE    
+  WHERE S_CLA_CODIGO = A.S_CLA_CODIGO    
+    AND S_TRA_CODIGO = @S_TRA_CODIGO    
+    AND D_COCL_CLASE_INICIOT = A.D_HOR_INICIO    
+        )    
+ /*    
+ UNION ALL    
+ SELECT 1    
+ FROM BD_EPEC_DES1.DBO.CONTROL_CLASE    
+ WHERE S_CLA_CODIGO = A.S_CLA_CODIGO    
+   AND S_TRA_CODIGO = @S_TRA_CODIGO    
+   AND D_COCL_CLASE_INICIOT = A.D_HOR_INICIO    
+ */    
+    ORDER BY    
+        A.D_HOR_INICIO,    
+        A.S_CLA_CODIGO    
+END    

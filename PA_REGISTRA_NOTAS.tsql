@@ -1,0 +1,221 @@
+CREATE   PROCEDURE  [dbo].[PA_REGISTRA_NOTAS]  
+    @S_ALU_CODIGO VARCHAR(20),  
+    @S_CLA_CODIGO VARCHAR(20),  
+    @N_NOTA_ID INT,  
+    @N_ALNODE_VALOR DECIMAL(5, 2),  
+    @N_NOTA_MOTIVO_ID VARCHAR(2) = NULL,  
+    @AUDIT_USUARIO VARCHAR(150),  
+    @IP VARCHAR(20) = NULL,  
+    @B_ALNODE_EVALUACION_INVESTIGACION BIT = 0  
+AS  
+BEGIN  
+    DECLARE  
+        @N_SEMESTRE_ID INT,  
+        @N_ALUMNO_NOTA_ID INT,  
+        @N_ALUMNO_NOTA_DETALLE_ID INT,  
+        @NOTA_INICIAL DECIMAL(5, 2),  
+        @NOTA_MOTIVO_INICIAL INT,  
+        @INVESTIGACION_INICIAL BIT,  
+        @ErrorMessage NVARCHAR(4000),  
+        @ErrorSeverity INT,  
+        @ErrorState INT,  
+        @ErrorMessage2 NVARCHAR(4000),  
+        @ErrorSeverity2 INT,  
+        @ErrorState2 INT,  
+        @HuboCambioDetalle BIT;  
+  
+    SET @HuboCambioDetalle = 0;  
+  
+    BEGIN TRY  
+        BEGIN TRAN PAS1;  
+  
+        SELECT @N_SEMESTRE_ID = n_semestre_id  
+        FROM dbo.clase  
+        WHERE s_cla_codigo = @S_CLA_CODIGO;  
+  
+        IF @N_SEMESTRE_ID IS NOT NULL  
+        BEGIN  
+            IF EXISTS (  
+                    SELECT 1  
+                    FROM dbo.matricula_detalle AS md  
+                    INNER JOIN dbo.semestre AS s  
+                        ON s.s_sem_codigo = md.s_sem_codigo  
+                       AND s.n_sem_estado = 1  
+                       AND s.n_semestre_id = @N_SEMESTRE_ID  
+                    WHERE md.s_alu_codigo = @S_ALU_CODIGO  
+                      AND md.s_cla_codigo = @S_CLA_CODIGO  
+                      AND RTRIM(LTRIM(UPPER(md.s_made_estado))) = N'RET'  
+                )  
+                THROW 50001, N'No se permite registrar notas para alumnos con estado RET en esta clase.', 1;  
+  
+            IF EXISTS (  
+                    SELECT 1  
+                    FROM dbo.alumno_nota AS an  
+                    WHERE an.s_alu_codigo = @S_ALU_CODIGO  
+                      AND an.s_cla_codigo = @S_CLA_CODIGO  
+                      AND an.n_semestre_id = @N_SEMESTRE_ID  
+                      AND ISNULL(an.b_alno_sancion, 0) = 1  
+                )  
+                THROW 50002, N'No se permite registrar notas: alumno con sanción de separación definitiva en la clase.', 1;  
+  
+            IF EXISTS (  
+                    SELECT 1  
+                    FROM dbo.alumno_nota AS an  
+                    INNER JOIN dbo.alumno_nota_detalle AS andd  
+                        ON andd.n_alumno_nota_id = an.n_alumno_nota_id  
+                       AND andd.n_nota_id = @N_NOTA_ID  
+                    WHERE an.s_alu_codigo = @S_ALU_CODIGO  
+                      AND an.s_cla_codigo = @S_CLA_CODIGO  
+                      AND an.n_semestre_id = @N_SEMESTRE_ID  
+                      AND (  
+                              ISNULL(andd.b_alnode_sancion, 0) = 1  
+                           OR ISNULL(andd.b_alnode_evaluacion_investigacion, 0) = 1  
+                          )  
+                )  
+                THROW 50003, N'No se permite registrar notas: evaluación sancionada o en investigación.', 1;  
+        END;  
+  
+        IF NOT EXISTS (  
+            SELECT 1  
+            FROM dbo.alumno_nota  
+            WHERE s_alu_codigo = @S_ALU_CODIGO  
+              AND s_cla_codigo = @S_CLA_CODIGO  
+        )  
+        BEGIN  
+            INSERT INTO dbo.alumno_nota (  
+                n_semestre_id,  
+                s_alu_codigo,  
+                s_cla_codigo,  
+                audit_usuario_creacion,  
+                audit_fecha_creacion,  
+                audit_host_creacion  
+            )  
+            VALUES (  
+                @N_SEMESTRE_ID,  
+                @S_ALU_CODIGO,  
+                @S_CLA_CODIGO,  
+                @AUDIT_USUARIO,  
+                dbo.GetFechaPeru(),  
+                LEFT(ISNULL(HOST_NAME(), ''), 20)  
+            );  
+  
+            SET @N_ALUMNO_NOTA_ID = SCOPE_IDENTITY();  
+        END  
+        ELSE  
+        BEGIN  
+            SELECT @N_ALUMNO_NOTA_ID = n_alumno_nota_id  
+            FROM dbo.alumno_nota  
+            WHERE s_alu_codigo = @S_ALU_CODIGO  
+              AND s_cla_codigo = @S_CLA_CODIGO;  
+        END;  
+  
+        IF EXISTS (  
+            SELECT 1  
+            FROM dbo.alumno_nota AS A  
+            INNER JOIN dbo.alumno_nota_detalle AS B ON B.n_alumno_nota_id = A.n_alumno_nota_id  
+            WHERE A.s_alu_codigo = @S_ALU_CODIGO  
+              AND A.s_cla_codigo = @S_CLA_CODIGO  
+              AND B.n_nota_id = @N_NOTA_ID  
+        )  
+        BEGIN  
+            SELECT  
+                @N_ALUMNO_NOTA_DETALLE_ID = B.n_alumno_nota_detalle_id,  
+                @NOTA_INICIAL = B.n_alnode_valor,  
+                @NOTA_MOTIVO_INICIAL = ISNULL(B.n_nota_motivo_id, 0),  
+                @INVESTIGACION_INICIAL = ISNULL(B.b_alnode_evaluacion_investigacion, 0)  
+            FROM dbo.alumno_nota AS A  
+            INNER JOIN dbo.alumno_nota_detalle AS B ON B.n_alumno_nota_id = A.n_alumno_nota_id  
+            WHERE A.s_alu_codigo = @S_ALU_CODIGO  
+              AND A.s_cla_codigo = @S_CLA_CODIGO  
+              AND B.n_nota_id = @N_NOTA_ID;  
+  
+            IF ABS(@NOTA_INICIAL - @N_ALNODE_VALOR) > 0.001  
+               OR ISNULL(@N_NOTA_MOTIVO_ID, 0) <> @NOTA_MOTIVO_INICIAL  
+               OR @B_ALNODE_EVALUACION_INVESTIGACION <> @INVESTIGACION_INICIAL  
+            BEGIN  
+                UPDATE dbo.alumno_nota_detalle  
+                SET  
+                    n_alnode_valor = @N_ALNODE_VALOR,  
+                    audit_usuario_actualizacion = @AUDIT_USUARIO,  
+                    audit_fecha_actualizacion = dbo.GetFechaPeru(),  
+                    n_nota_motivo_id = CASE WHEN @N_NOTA_MOTIVO_ID IS NOT NULL THEN @N_NOTA_MOTIVO_ID ELSE NULL END,  
+                    s_alnode_ip_actualizacion = @IP,  
+                    b_alnode_evaluacion_investigacion = @B_ALNODE_EVALUACION_INVESTIGACION  
+                WHERE n_alumno_nota_detalle_id = @N_ALUMNO_NOTA_DETALLE_ID;  
+  
+                SET @HuboCambioDetalle = 1;  
+            END;  
+        END  
+        ELSE  
+        BEGIN  
+            INSERT INTO dbo.alumno_nota_detalle (  
+                n_alumno_nota_id,  
+                n_nota_id,  
+                n_alnode_valor,  
+                n_nota_motivo_id,  
+                audit_usuario_creacion,  
+                audit_fecha_creacion,  
+                audit_host_creacion,  
+                s_alnode_ip_creacion,  
+                b_alnode_evaluacion_investigacion  
+            )  
+            VALUES (  
+                @N_ALUMNO_NOTA_ID,  
+                @N_NOTA_ID,  
+                @N_ALNODE_VALOR,  
+                CASE WHEN @N_NOTA_MOTIVO_ID IS NOT NULL THEN @N_NOTA_MOTIVO_ID ELSE NULL END,  
+                @AUDIT_USUARIO,  
+                dbo.GetFechaPeru(),  
+                LEFT(ISNULL(HOST_NAME(), ''), 20),  
+                @IP,  
+                @B_ALNODE_EVALUACION_INVESTIGACION  
+            );  
+  
+            SET @HuboCambioDetalle = 1;  
+        END;  
+  
+        COMMIT TRAN PAS1;  
+    END TRY  
+    BEGIN CATCH  
+        IF @@TRANCOUNT > 0  
+            ROLLBACK TRAN PAS1;  
+  
+        SELECT  
+            @ErrorMessage = ERROR_MESSAGE(),  
+            @ErrorSeverity = ERROR_SEVERITY(),  
+            @ErrorState = ERROR_STATE();  
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);  
+        RETURN;  
+    END CATCH;  
+  
+    IF @HuboCambioDetalle = 1  
+    BEGIN  
+        BEGIN TRY  
+            BEGIN TRAN PAS2;  
+  
+            IF @N_ALUMNO_NOTA_ID IS NULL  
+            BEGIN  
+                RAISERROR(N'PA_REGISTRA_NOTAS: no se pudo determinar N_ALUMNO_NOTA_ID para recalcular promedio.', 16, 1);  
+            END;  
+  
+            EXEC dbo.PA_CALCULA_PROMEDIO_ALUMNO_NOTA  
+                @p_s_cla_codigo = @S_CLA_CODIGO,  
+                @p_n_alumno_nota_id = @N_ALUMNO_NOTA_ID,  
+                @p_audit_usuario = @AUDIT_USUARIO,  
+                @p_audit_host = @IP,  
+                @p_recalcular_toda_la_clase = 0;  
+  
+            COMMIT TRAN PAS2;  
+        END TRY  
+        BEGIN CATCH  
+            IF @@TRANCOUNT > 0  
+                ROLLBACK TRAN PAS2;  
+  
+            SELECT  
+                @ErrorMessage2 = ERROR_MESSAGE(),  
+                @ErrorSeverity2 = ERROR_SEVERITY(),  
+                @ErrorState2 = ERROR_STATE();  
+            RAISERROR (@ErrorMessage2, @ErrorSeverity2, @ErrorState2);  
+        END CATCH;  
+    END;  
+END;  

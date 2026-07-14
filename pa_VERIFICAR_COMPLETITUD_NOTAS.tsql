@@ -1,0 +1,198 @@
+CREATE   PROCEDURE[dbo].[pa_VERIFICAR_COMPLETITUD_NOTAS]    
+    @S_CLA_CODIGO VARCHAR(20),    
+    @N_NOTA_ID INT    
+AS    
+BEGIN    
+    SET NOCOUNT ON;    
+    
+    DECLARE @N_TOTAL_ALUMNOS INT = 0;    
+    DECLARE @N_NOTAS_GUARDADAS INT = 0;    
+    DECLARE @N_FALTANTES INT = 0;    
+    DECLARE @N_NOTAS_SIN_MOTIVO INT = 0;    
+    DECLARE @B_COMPLETO BIT = 0;    
+    DECLARE @B_MOTIVOS_COMPLETOS BIT = 1;    
+    DECLARE @SEMESTRE INT;    
+    
+    DECLARE @AlumnosHabilitados TABLE (    
+        s_alu_codigo VARCHAR(20) NOT NULL PRIMARY KEY    
+    );    
+    
+    IF NOT EXISTS (SELECT 1 FROM dbo.clase WHERE s_cla_codigo = @S_CLA_CODIGO)    
+    BEGIN    
+        SELECT    
+            CAST(0 AS BIT) AS b_completo,    
+            0 AS n_total_alumnos,    
+            0 AS n_notas_guardadas,    
+            0 AS n_faltantes,    
+            0 AS n_notas_sin_motivo,    
+            CAST(1 AS BIT) AS b_motivos_completos;    
+        RETURN;    
+    END    
+    
+    SELECT @SEMESTRE = c.n_semestre_id    
+    FROM dbo.clase c    
+    WHERE c.s_cla_codigo = @S_CLA_CODIGO;    
+    
+    IF @SEMESTRE IS NULL    
+    BEGIN    
+        SELECT    
+            CAST(0 AS BIT) AS b_completo,    
+            0 AS n_total_alumnos,    
+            0 AS n_notas_guardadas,    
+            0 AS n_faltantes,    
+            0 AS n_notas_sin_motivo,    
+            CAST(1 AS BIT) AS b_motivos_completos;    
+        RETURN;    
+    END    
+    
+    ;WITH AlumnosPlanilla AS (    
+        SELECT DISTINCT    
+            A.s_alu_codigo,    
+            D.s_made_estado,    
+            ISNULL(B.b_alno_sancion, 0) AS b_alno_sancion    
+        FROM dbo.alumno A    
+        INNER JOIN dbo.matricula_detalle D    
+            ON A.s_alu_codigo = D.s_alu_codigo    
+           AND D.s_cla_codigo = @S_CLA_CODIGO    
+        INNER JOIN dbo.semestre S    
+            ON S.s_sem_codigo = D.s_sem_codigo    
+           AND S.n_sem_estado = 1    
+        INNER JOIN dbo.alumno_nota B    
+            ON A.s_alu_codigo = B.s_alu_codigo    
+           AND B.n_semestre_id = S.n_semestre_id    
+        INNER JOIN dbo.alumno_nota_detalle C    
+            ON B.n_alumno_nota_id = C.n_alumno_nota_id    
+        INNER JOIN dbo.clase CL    
+            ON CL.s_cla_codigo = D.s_cla_codigo    
+        INNER JOIN dbo.departamento DEP    
+            ON DEP.s_dep_codigo = CL.s_dep_codigo    
+        WHERE B.s_cla_codigo = @S_CLA_CODIGO    
+          AND C.n_nota_id = @N_NOTA_ID    
+    
+        UNION ALL    
+    
+        SELECT DISTINCT    
+            A.s_alu_codigo,    
+            B.s_made_estado,    
+            ISNULL(AN.b_alno_sancion, 0) AS b_alno_sancion    
+        FROM dbo.alumno A    
+        INNER JOIN dbo.matricula_detalle B    
+            ON A.s_alu_codigo = B.s_alu_codigo    
+        INNER JOIN dbo.clase D    
+            ON B.s_cla_codigo = D.s_cla_codigo    
+        INNER JOIN dbo.semestre E    
+            ON D.n_semestre_id = E.n_semestre_id    
+           AND E.n_sem_estado = 1    
+           AND B.s_sem_codigo = E.s_sem_codigo    
+        LEFT JOIN dbo.alumno_nota AN    
+            ON A.s_alu_codigo = AN.s_alu_codigo    
+           AND AN.s_cla_codigo = B.s_cla_codigo    
+           AND AN.n_semestre_id = E.n_semestre_id    
+        INNER JOIN dbo.departamento DEP    
+            ON DEP.s_dep_codigo = D.s_dep_codigo    
+        WHERE B.s_cla_codigo = @S_CLA_CODIGO    
+          AND A.s_alu_codigo NOT IN (    
+              SELECT A2.s_alu_codigo    
+              FROM dbo.alumno A2    
+              INNER JOIN dbo.matricula_detalle D2    
+                  ON A2.s_alu_codigo = D2.s_alu_codigo    
+                 AND D2.s_cla_codigo = @S_CLA_CODIGO    
+              INNER JOIN dbo.semestre S2    
+                  ON S2.s_sem_codigo = D2.s_sem_codigo    
+                 AND S2.n_sem_estado = 1    
+              INNER JOIN dbo.alumno_nota B2    
+                  ON A2.s_alu_codigo = B2.s_alu_codigo    
+                 AND B2.n_semestre_id = S2.n_semestre_id    
+              INNER JOIN dbo.alumno_nota_detalle C2    
+                  ON B2.n_alumno_nota_id = C2.n_alumno_nota_id    
+              WHERE B2.s_cla_codigo = @S_CLA_CODIGO    
+                AND C2.n_nota_id = @N_NOTA_ID    
+          )    
+    )    
+    INSERT INTO @AlumnosHabilitados (s_alu_codigo)    
+    SELECT DISTINCT ap.s_alu_codigo    
+    FROM AlumnosPlanilla ap    
+    WHERE ISNULL(RTRIM(LTRIM(ap.s_made_estado)), '') <> 'RET'    
+      AND ap.b_alno_sancion = 0;    
+    
+    SELECT @N_TOTAL_ALUMNOS = COUNT(*)    
+    FROM @AlumnosHabilitados;    
+    
+    SELECT @N_NOTAS_GUARDADAS = COUNT(DISTINCT AN.s_alu_codigo)    
+    FROM dbo.alumno_nota_detalle ANDET    
+    INNER JOIN dbo.alumno_nota AN    
+        ON ANDET.n_alumno_nota_id = AN.n_alumno_nota_id    
+    INNER JOIN @AlumnosHabilitados AH    
+        ON AH.s_alu_codigo = AN.s_alu_codigo    
+    INNER JOIN dbo.matricula_detalle D    
+        ON AN.s_alu_codigo = D.s_alu_codigo    
+       AND AN.s_cla_codigo = D.s_cla_codigo    
+    INNER JOIN dbo.semestre S    
+        ON S.s_sem_codigo = D.s_sem_codigo    
+       AND S.n_sem_estado = 1    
+    INNER JOIN dbo.alumno A    
+        ON A.s_alu_codigo = D.s_alu_codigo    
+    INNER JOIN dbo.clase CL    
+        ON CL.s_cla_codigo = D.s_cla_codigo    
+    INNER JOIN dbo.departamento DEP    
+        ON DEP.s_dep_codigo = CL.s_dep_codigo    
+    WHERE AN.s_cla_codigo = @S_CLA_CODIGO    
+      AND ANDET.n_nota_id = @N_NOTA_ID    
+      AND ANDET.n_alnode_valor IS NOT NULL    
+      AND AN.n_semestre_id = S.n_semestre_id    
+      AND AN.n_semestre_id = @SEMESTRE;    
+    
+    SELECT @N_NOTAS_SIN_MOTIVO = COUNT(DISTINCT AN.s_alu_codigo)    
+    FROM dbo.alumno_nota_detalle ANDET    
+    INNER JOIN dbo.alumno_nota AN    
+        ON ANDET.n_alumno_nota_id = AN.n_alumno_nota_id    
+    INNER JOIN @AlumnosHabilitados AH    
+        ON AH.s_alu_codigo = AN.s_alu_codigo    
+    INNER JOIN dbo.matricula_detalle D    
+        ON AN.s_alu_codigo = D.s_alu_codigo    
+       AND AN.s_cla_codigo = D.s_cla_codigo    
+    INNER JOIN dbo.semestre S    
+        ON S.s_sem_codigo = D.s_sem_codigo    
+       AND S.n_sem_estado = 1    
+    INNER JOIN dbo.alumno A    
+        ON A.s_alu_codigo = D.s_alu_codigo    
+    INNER JOIN dbo.clase CL    
+        ON CL.s_cla_codigo = D.s_cla_codigo    
+    INNER JOIN dbo.departamento DEP    
+        ON DEP.s_dep_codigo = CL.s_dep_codigo    
+    WHERE AN.s_cla_codigo = @S_CLA_CODIGO    
+      AND ANDET.n_nota_id = @N_NOTA_ID    
+      AND ANDET.n_alnode_valor = 0    
+      AND (ANDET.n_nota_motivo_id IS NULL OR ANDET.n_nota_motivo_id = 0)    
+      AND AN.n_semestre_id = S.n_semestre_id    
+      AND AN.n_semestre_id = @SEMESTRE  
+      -- Excluir alumnos con DPI aplicado  
+      AND NOT EXISTS (  
+          SELECT 1 FROM dpi_alumno da  
+          WHERE da.s_alu_codigo            = AN.s_alu_codigo  
+            AND da.s_cla_codigo            = AN.s_cla_codigo  
+            AND da.n_alumno_nota_detalle_id = ANDET.n_alumno_nota_detalle_id  
+            AND da.b_dpi_aplicado          = 1  
+      );  
+    
+    IF @N_NOTAS_SIN_MOTIVO > 0    
+        SET @B_MOTIVOS_COMPLETOS = 0;    
+    
+    SET @N_FALTANTES = @N_TOTAL_ALUMNOS - @N_NOTAS_GUARDADAS;    
+    
+    IF @N_TOTAL_ALUMNOS = 0    
+        SET @B_COMPLETO = 1;    
+    ELSE IF @N_NOTAS_GUARDADAS = @N_TOTAL_ALUMNOS    
+         AND @B_MOTIVOS_COMPLETOS = 1    
+        SET @B_COMPLETO = 1;    
+    ELSE    
+        SET @B_COMPLETO = 0;    
+    
+    SELECT    
+        @B_COMPLETO AS b_completo,    
+        @N_TOTAL_ALUMNOS AS n_total_alumnos,    
+        @N_NOTAS_GUARDADAS AS n_notas_guardadas,    
+        @N_FALTANTES AS n_faltantes,    
+        @N_NOTAS_SIN_MOTIVO AS n_notas_sin_motivo,    
+        @B_MOTIVOS_COMPLETOS AS b_motivos_completos;    
+END    

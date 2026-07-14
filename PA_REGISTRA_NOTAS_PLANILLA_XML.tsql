@@ -1,0 +1,265 @@
+CREATE   PROCEDURE dbo.PA_REGISTRA_NOTAS_PLANILLA_XML  
+    @S_CLA_CODIGO VARCHAR(20),  
+    @XMLDATA XML,  
+    @AUDIT_USUARIO VARCHAR(150),  
+    @IP VARCHAR(20) = NULL  
+AS  
+BEGIN  
+    SET NOCOUNT ON;  
+    SET XACT_ABORT ON;  
+  
+    DECLARE  
+        @IDOC INT,  
+        @N_SEMESTRE_ID INT,  
+        @AlumnoNotaId INT,  
+        @ErrorMessage NVARCHAR(4000),  
+        @ErrorSeverity INT,  
+        @ErrorState INT;  
+  
+    DECLARE @TDATA TABLE  
+    (  
+        S_ALU_CODIGO VARCHAR(20) NOT NULL,  
+        N_NOTA_ID INT NOT NULL,  
+        N_ALNODE_VALOR DECIMAL(5, 2) NOT NULL,  
+        N_NOTA_MOTIVO_ID VARCHAR(2) NULL,  
+        B_ALNODE_EVALUACION_INVESTIGACION BIT NOT NULL,  
+        N_ALUMNO_NOTA_ID INT NULL,  
+        N_ALUMNO_NOTA_DETALLE_ID INT NULL,  
+        NOTA_INICIAL DECIMAL(5, 2) NULL,  
+        NOTA_MOTIVO_INICIAL INT NULL,  
+        INVESTIGACION_INICIAL BIT NULL,  
+        HUBO_CAMBIO BIT NOT NULL DEFAULT (0),  
+        PRIMARY KEY (S_ALU_CODIGO, N_NOTA_ID)  
+    );  
+  
+    DECLARE @AlumnosAfectados TABLE  
+    (  
+        n_alumno_nota_id INT NOT NULL PRIMARY KEY  
+    );  
+  
+    IF @XMLDATA IS NULL  
+    BEGIN  
+        RAISERROR(N'PA_REGISTRA_NOTAS_PLANILLA_XML: el XML de notas es obligatorio.', 16, 1);  
+        RETURN;  
+    END;  
+  
+    EXEC sp_xml_preparedocument @IDOC OUTPUT, @XMLDATA;  
+  
+    INSERT INTO @TDATA  
+    (  
+        S_ALU_CODIGO,  
+        N_NOTA_ID,  
+        N_ALNODE_VALOR,  
+        N_NOTA_MOTIVO_ID,  
+        B_ALNODE_EVALUACION_INVESTIGACION  
+    )  
+    SELECT DISTINCT  
+        LTRIM(RTRIM(X.s_alu_codigo)),  
+        X.n_nota_id,  
+        CAST(X.n_alnode_valor AS DECIMAL(5, 2)),  
+        NULLIF(LTRIM(RTRIM(X.n_nota_motivo_id)), ''),  
+        CASE  
+            WHEN NULLIF(LTRIM(RTRIM(X.b_alnode_evaluacion_investigacion)), '') IN ('1', 'true', 'True') THEN 1  
+            ELSE 0  
+        END  
+    FROM OPENXML(@IDOC, '/registro/nota', 1)  
+    WITH  
+    (  
+        s_cla_codigo VARCHAR(20),  
+        s_alu_codigo VARCHAR(20),  
+        n_nota_id INT,  
+        n_alnode_valor VARCHAR(20),  
+        n_nota_motivo_id VARCHAR(2),  
+        b_alnode_evaluacion_investigacion VARCHAR(5)  
+    ) AS X  
+    WHERE LTRIM(RTRIM(X.s_cla_codigo)) = @S_CLA_CODIGO  
+      AND NULLIF(LTRIM(RTRIM(X.s_alu_codigo)), '') IS NOT NULL;  
+  
+    EXEC sp_xml_removedocument @IDOC;  
+  
+    IF NOT EXISTS (SELECT 1 FROM @TDATA)  
+    BEGIN  
+        RAISERROR(N'PA_REGISTRA_NOTAS_PLANILLA_XML: no se encontraron notas válidas en el XML.', 16, 1);  
+        RETURN;  
+    END;  
+  
+    SELECT @N_SEMESTRE_ID = c.n_semestre_id  
+    FROM dbo.clase AS c  
+    WHERE c.s_cla_codigo = @S_CLA_CODIGO;  
+  
+    IF @N_SEMESTRE_ID IS NULL  
+    BEGIN  
+        RAISERROR(N'PA_REGISTRA_NOTAS_PLANILLA_XML: no se encontró la clase indicada.', 16, 1);  
+        RETURN;  
+    END;  
+  
+    IF EXISTS (  
+            SELECT 1  
+            FROM @TDATA AS d  
+            INNER JOIN dbo.matricula_detalle AS md  
+                ON md.s_alu_codigo = d.S_ALU_CODIGO  
+               AND md.s_cla_codigo = @S_CLA_CODIGO  
+            INNER JOIN dbo.semestre AS s  
+                ON s.s_sem_codigo = md.s_sem_codigo  
+               AND s.n_sem_estado = 1  
+               AND s.n_semestre_id = @N_SEMESTRE_ID  
+            WHERE RTRIM(LTRIM(UPPER(md.s_made_estado))) = N'RET'  
+        )  
+        THROW 50001, N'No se permite registrar notas para alumnos con estado RET en esta clase.', 1;  
+  
+    IF EXISTS (  
+            SELECT 1  
+            FROM @TDATA AS d  
+            INNER JOIN dbo.alumno_nota AS an  
+                ON an.s_alu_codigo = d.S_ALU_CODIGO  
+               AND an.s_cla_codigo = @S_CLA_CODIGO  
+               AND an.n_semestre_id = @N_SEMESTRE_ID  
+            WHERE ISNULL(an.b_alno_sancion, 0) = 1  
+        )  
+        THROW 50002, N'No se permite registrar notas: alumno con sanción de separación definitiva en la clase.', 1;  
+  
+    IF EXISTS (  
+            SELECT 1  
+            FROM @TDATA AS d  
+            INNER JOIN dbo.alumno_nota AS an  
+                ON an.s_alu_codigo = d.S_ALU_CODIGO  
+               AND an.s_cla_codigo = @S_CLA_CODIGO  
+               AND an.n_semestre_id = @N_SEMESTRE_ID  
+            INNER JOIN dbo.alumno_nota_detalle AS andd  
+                ON andd.n_alumno_nota_id = an.n_alumno_nota_id  
+               AND andd.n_nota_id = d.N_NOTA_ID  
+            WHERE ISNULL(andd.b_alnode_sancion, 0) = 1  
+               OR ISNULL(andd.b_alnode_evaluacion_investigacion, 0) = 1  
+        )  
+        THROW 50003, N'No se permite registrar notas: evaluación sancionada o en investigación.', 1;  
+  
+    BEGIN TRY  
+        BEGIN TRAN;  
+  
+        INSERT INTO dbo.alumno_nota  
+        (  
+            n_semestre_id,  
+            s_alu_codigo,  
+            s_cla_codigo,  
+            audit_usuario_creacion,  
+            audit_fecha_creacion,  
+            audit_host_creacion  
+        )  
+        SELECT DISTINCT  
+            @N_SEMESTRE_ID,  
+            d.S_ALU_CODIGO,  
+            @S_CLA_CODIGO,  
+            @AUDIT_USUARIO,  
+            dbo.GetFechaPeru(),  
+            LEFT(ISNULL(HOST_NAME(), ''), 20)  
+        FROM @TDATA AS d  
+        WHERE NOT EXISTS (  
+            SELECT 1  
+            FROM dbo.alumno_nota AS an  
+            WHERE an.s_alu_codigo = d.S_ALU_CODIGO  
+              AND an.s_cla_codigo = @S_CLA_CODIGO  
+        );  
+  
+        UPDATE t  
+        SET t.N_ALUMNO_NOTA_ID = an.n_alumno_nota_id  
+        FROM @TDATA AS t  
+        INNER JOIN dbo.alumno_nota AS an  
+            ON an.s_alu_codigo = t.S_ALU_CODIGO  
+           AND an.s_cla_codigo = @S_CLA_CODIGO;  
+  
+        UPDATE t  
+        SET  
+            t.N_ALUMNO_NOTA_DETALLE_ID = ad.n_alumno_nota_detalle_id,  
+            t.NOTA_INICIAL = ad.n_alnode_valor,  
+            t.NOTA_MOTIVO_INICIAL = ISNULL(ad.n_nota_motivo_id, 0),  
+            t.INVESTIGACION_INICIAL = ISNULL(ad.b_alnode_evaluacion_investigacion, 0)  
+        FROM @TDATA AS t  
+        INNER JOIN dbo.alumno_nota_detalle AS ad  
+            ON ad.n_alumno_nota_id = t.N_ALUMNO_NOTA_ID  
+           AND ad.n_nota_id = t.N_NOTA_ID;  
+  
+        UPDATE t  
+        SET t.HUBO_CAMBIO = 1  
+        FROM @TDATA AS t  
+        WHERE t.N_ALUMNO_NOTA_DETALLE_ID IS NULL  
+           OR ABS(ISNULL(t.NOTA_INICIAL, 0) - t.N_ALNODE_VALOR) > 0.001  
+           OR ISNULL(t.N_NOTA_MOTIVO_ID, '0') <> CAST(ISNULL(t.NOTA_MOTIVO_INICIAL, 0) AS VARCHAR(2))  
+           OR t.B_ALNODE_EVALUACION_INVESTIGACION <> ISNULL(t.INVESTIGACION_INICIAL, 0);  
+  
+        UPDATE ad  
+        SET  
+            ad.n_alnode_valor = t.N_ALNODE_VALOR,  
+            ad.audit_usuario_actualizacion = @AUDIT_USUARIO,  
+            ad.audit_fecha_actualizacion = dbo.GetFechaPeru(),  
+            ad.n_nota_motivo_id = CASE WHEN t.N_NOTA_MOTIVO_ID IS NOT NULL THEN t.N_NOTA_MOTIVO_ID ELSE NULL END,  
+            ad.s_alnode_ip_actualizacion = @IP,  
+            ad.b_alnode_evaluacion_investigacion = t.B_ALNODE_EVALUACION_INVESTIGACION  
+        FROM dbo.alumno_nota_detalle AS ad  
+        INNER JOIN @TDATA AS t  
+            ON t.N_ALUMNO_NOTA_DETALLE_ID = ad.n_alumno_nota_detalle_id  
+        WHERE t.HUBO_CAMBIO = 1  
+          AND t.N_ALUMNO_NOTA_DETALLE_ID IS NOT NULL;  
+  
+        INSERT INTO dbo.alumno_nota_detalle  
+        (  
+            n_alumno_nota_id,  
+            n_nota_id,  
+            n_alnode_valor,  
+            n_nota_motivo_id,  
+            audit_usuario_creacion,  
+            audit_fecha_creacion,  
+            audit_host_creacion,  
+            s_alnode_ip_creacion,  
+            b_alnode_evaluacion_investigacion  
+        )  
+        SELECT  
+            t.N_ALUMNO_NOTA_ID,  
+            t.N_NOTA_ID,  
+            t.N_ALNODE_VALOR,  
+            CASE WHEN t.N_NOTA_MOTIVO_ID IS NOT NULL THEN t.N_NOTA_MOTIVO_ID ELSE NULL END,  
+            @AUDIT_USUARIO,  
+            dbo.GetFechaPeru(),  
+            LEFT(ISNULL(HOST_NAME(), ''), 20),  
+            @IP,  
+            t.B_ALNODE_EVALUACION_INVESTIGACION  
+        FROM @TDATA AS t  
+        WHERE t.HUBO_CAMBIO = 1  
+          AND t.N_ALUMNO_NOTA_DETALLE_ID IS NULL  
+          AND t.N_ALUMNO_NOTA_ID IS NOT NULL;  
+  
+        INSERT INTO @AlumnosAfectados (n_alumno_nota_id)  
+        SELECT DISTINCT t.N_ALUMNO_NOTA_ID  
+        FROM @TDATA AS t  
+        WHERE t.HUBO_CAMBIO = 1  
+          AND t.N_ALUMNO_NOTA_ID IS NOT NULL;  
+  
+        WHILE EXISTS (SELECT 1 FROM @AlumnosAfectados)  
+        BEGIN  
+            SELECT TOP (1) @AlumnoNotaId = aa.n_alumno_nota_id  
+            FROM @AlumnosAfectados AS aa;  
+  
+            EXEC dbo.PA_CALCULA_PROMEDIO_ALUMNO_NOTA  
+                @p_s_cla_codigo = @S_CLA_CODIGO,  
+                @p_n_alumno_nota_id = @AlumnoNotaId,  
+                @p_audit_usuario = @AUDIT_USUARIO,  
+                @p_audit_host = @IP,  
+                @p_recalcular_toda_la_clase = 0;  
+  
+            DELETE FROM @AlumnosAfectados  
+            WHERE n_alumno_nota_id = @AlumnoNotaId;  
+        END;  
+  
+        COMMIT TRAN;  
+    END TRY  
+    BEGIN CATCH  
+        IF @@TRANCOUNT > 0  
+            ROLLBACK TRAN;  
+  
+        SELECT  
+            @ErrorMessage = ERROR_MESSAGE(),  
+            @ErrorSeverity = ERROR_SEVERITY(),  
+            @ErrorState = ERROR_STATE();  
+  
+        RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);  
+    END CATCH;  
+END;  

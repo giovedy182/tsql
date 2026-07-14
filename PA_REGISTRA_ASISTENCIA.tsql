@@ -1,0 +1,128 @@
+  
+CREATE   PROCEDURE [dbo].[PA_REGISTRA_ASISTENCIA]  
+    @N_CONTROL_CLASE_ID INT,  
+    @N_SEMESTRE_ID INT,  
+    @D_ALAS_FECHA DATETIME,  
+    @S_ALU_CODIGO VARCHAR(20),  
+    @S_CLA_CODIGO VARCHAR(20),  
+    @S_ALAS_CONTROL CHAR(1),  
+    @AUDIT_USUARIO VARCHAR(50)  
+AS  
+BEGIN  
+    DECLARE   
+        @N_ALUMNO_ASISTENCIA_ID INT,  
+        @MARCA_OLD CHAR(1);  
+  
+    BEGIN TRAN;  
+  
+    IF EXISTS (  
+        SELECT 1  
+        FROM ALUMNO_ASISTENCIA  
+        WHERE N_CONTROL_CLASE_ID = @N_CONTROL_CLASE_ID  
+          AND S_ALU_CODIGO = @S_ALU_CODIGO  
+    )  
+    BEGIN  
+        SELECT   
+            @N_ALUMNO_ASISTENCIA_ID = N_ALUMNO_ASISTENCIA_ID,  
+            @MARCA_OLD = S_ALAS_CONTROL  
+        FROM ALUMNO_ASISTENCIA  
+        WHERE N_CONTROL_CLASE_ID = @N_CONTROL_CLASE_ID  
+          AND S_ALU_CODIGO = @S_ALU_CODIGO;  
+  
+        SELECT   
+            @MARCA_OLD,  
+            @S_ALAS_CONTROL;  
+  
+        IF @MARCA_OLD <> @S_ALAS_CONTROL  
+        BEGIN  
+            UPDATE ALUMNO_ASISTENCIA  
+            SET   
+                S_ALAS_CONTROL = @S_ALAS_CONTROL,  
+                AUDIT_USUARIO_ACTUALIZACION = @AUDIT_USUARIO,  
+                AUDIT_FECHA_ACTUALIZACION = dbo.GetFechaPeru(),  
+    AUDIT_HOST_ACTUALIZACION = HOST_NAME()  
+            WHERE N_CONTROL_CLASE_ID = @N_CONTROL_CLASE_ID  
+              AND S_ALU_CODIGO = @S_ALU_CODIGO;  
+  
+            IF @@ERROR <> 0   
+                GOTO ERROR;  
+  
+            /*INSERT INTO ALUMNO_ASISTENCIA_LOG  
+            (  
+                N_ALUMNO_ASISTENCIA_ID,  
+                AUDIT_USUARIO_CREACION,  
+                AUDIT_FECHA_CREACION,  
+                S_ALASLO_VALOR_ORIGINAL,  
+                S_ALASLO_VALOR_ACTUAL  
+            )  
+            VALUES  
+            (  
+                @N_ALUMNO_ASISTENCIA_ID,  
+                @AUDIT_USUARIO,  
+                dbo.GetFechaPeru(),  
+                @MARCA_OLD,  
+                @S_ALAS_CONTROL  
+            );  
+  
+            IF @@ERROR <> 0   
+                GOTO ERROR;*/  
+        END  
+    END  
+    ELSE  
+    BEGIN  
+        INSERT INTO ALUMNO_ASISTENCIA  
+        (  
+            N_CONTROL_CLASE_ID,  
+            N_SEMESTRE_ID,  
+            D_ALAS_FECHA,  
+            S_ALU_CODIGO,  
+            S_CLA_CODIGO,  
+            S_ALAS_CONTROL,  
+            AUDIT_USUARIO_CREACION,  
+   AUDIT_FECHA_CREACION,  
+   AUDIT_HOST_CREACION  
+        )  
+        VALUES  
+        (  
+            @N_CONTROL_CLASE_ID,  
+            @N_SEMESTRE_ID,  
+            @D_ALAS_FECHA,  
+            @S_ALU_CODIGO,  
+            @S_CLA_CODIGO,  
+            @S_ALAS_CONTROL,  
+            @AUDIT_USUARIO,  
+   dbo.GetFechaPeru(),  
+   HOST_NAME()  
+        );  
+  
+        IF @@ERROR <> 0   
+            GOTO ERROR;  
+  
+        /*INSERT INTO ALUMNO_ASISTENCIA_LOG  
+        (  
+            N_ALUMNO_ASISTENCIA_ID,  
+            AUDIT_USUARIO_CREACION,  
+            AUDIT_FECHA_CREACION,  
+            S_ALASLO_VALOR_ORIGINAL,  
+            S_ALASLO_VALOR_ACTUAL  
+        )  
+        VALUES  
+        (  
+            @@IDENTITY,  
+            @AUDIT_USUARIO,  
+            dbo.GetFechaPeru(),  
+            '',  
+            @S_ALAS_CONTROL  
+        );  
+  
+        IF @@ERROR <> 0   
+            GOTO ERROR;*/  
+    END;  
+  
+    COMMIT TRAN;  
+    RETURN;  
+  
+ERROR:  
+    ROLLBACK TRAN;  
+  
+END  

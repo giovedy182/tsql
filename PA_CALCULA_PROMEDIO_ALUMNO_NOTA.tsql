@@ -1,0 +1,38 @@
+CREATE   PROCEDURE  [dbo].[PA_CALCULA_PROMEDIO_ALUMNO_NOTA]  
+    @p_s_cla_codigo               VARCHAR(20),  
+    @p_n_alumno_nota_id           INT = NULL,  
+    @p_audit_usuario              VARCHAR(150),  
+    @p_audit_host                 VARCHAR(20) = NULL,  
+    @p_recalcular_toda_la_clase   BIT = 0  
+AS  
+BEGIN  
+    SET NOCOUNT ON;  
+    SET XACT_ABORT ON;  
+    DECLARE @audit_usuario_prom VARCHAR(150) = ISNULL(NULLIF(LTRIM(RTRIM(@p_audit_usuario)), ''), USER_NAME());  
+    DECLARE @audit_host_prom VARCHAR(20) = LEFT(ISNULL(NULLIF(LTRIM(RTRIM(@p_audit_host)), ''), HOST_NAME()), 20);  
+    DECLARE @T_PROMEDIOS TABLE (n_alumno_nota_id INT PRIMARY KEY, n_alno_promedio DECIMAL(5,2));  
+  
+    INSERT INTO @T_PROMEDIOS (n_alumno_nota_id, n_alno_promedio)  
+    SELECT AN.n_alumno_nota_id,  
+           CONVERT(DECIMAL(5,2), ISNULL(ROUND(SUM(CASE  
+                                                    WHEN ISNULL(AD.b_alnode_evaluacion_investigacion, 0) = 1 THEN 0  
+                                                    WHEN ISNULL(AD.b_alnode_sancion, 0) = 1 THEN 0  
+                                                    ELSE ISNULL(AD.n_alnode_valor, 0)  
+                                                END * CN.n_clno_peso), 0), 0)) AS n_alno_promedio  
+    FROM dbo.alumno_nota AS AN  
+    INNER JOIN dbo.clase_nota AS CN ON CN.s_cla_codigo = @p_s_cla_codigo AND CN.n_clno_estado = 1  
+    INNER JOIN dbo.nota AS N ON N.n_nota_id = CN.n_nota_id AND N.s_not_tipo IN ('T', 'E') AND N.n_not_estado = 1  
+    LEFT JOIN dbo.alumno_nota_detalle AS AD ON AD.n_alumno_nota_id = AN.n_alumno_nota_id AND AD.n_nota_id = CN.n_nota_id  
+    WHERE AN.s_cla_codigo = @p_s_cla_codigo  
+      AND ISNULL(AN.b_alno_sancion, 0) = 0  
+      AND (@p_recalcular_toda_la_clase = 1 OR (@p_recalcular_toda_la_clase = 0 AND @p_n_alumno_nota_id IS NOT NULL AND AN.n_alumno_nota_id = @p_n_alumno_nota_id))  
+    GROUP BY AN.n_alumno_nota_id;  
+  
+    UPDATE AN  
+       SET AN.n_alno_promedio = TP.n_alno_promedio,  
+           AN.audit_usuario_actualizacion = @audit_usuario_prom,  
+           AN.audit_fecha_actualizacion = dbo.GetFechaPeru(),  
+           AN.audit_host_actualizacion = @audit_host_prom  
+    FROM dbo.alumno_nota AS AN  
+    INNER JOIN @T_PROMEDIOS AS TP ON TP.n_alumno_nota_id = AN.n_alumno_nota_id;  
+END  

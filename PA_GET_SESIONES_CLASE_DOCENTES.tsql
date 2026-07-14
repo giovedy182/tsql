@@ -1,0 +1,38 @@
+CREATE PROCEDURE [dbo].[PA_GET_SESIONES_CLASE_DOCENTES]  
+ @s_cla_codigo VARCHAR(20),  
+ @s_tra_codigo VARCHAR(10)  
+AS  
+BEGIN  
+ SELECT   
+  n_control_clase_id,  
+  s_cla_codigo,  
+  s_tra_codigo,  
+  s_cocl_tipo_docente,  
+  d_cocl_fecha,  
+  s_cocl_tipo_clase,  
+  d_cocl_clase_inicio,  
+  d_cocl_clase_termino,  
+  n_cocl_nrodia,  
+  s_aul_codigo,  
+  n_cocl_nrosesion,  
+  d_cocl_clase_iniciot,  
+  d_cocl_clase_terminot,  
+  s_cocl_observaciones,  
+  s_cocl_tipo_cierre,  
+  s_cocl_estado,  
+  s_cocl_estado_proceso,  
+  audit_usuario_creacion,  
+  audit_fecha_creacion,  
+  audit_host_creacion,  
+  audit_usuario_actualizacion,  
+  audit_fecha_actualizacion,  
+  audit_host_actualizacion,  
+  s_hor_tipo_reunion  
+ FROM control_clase  
+ WHERE s_cla_codigo = @s_cla_codigo  
+   AND s_tra_codigo = @s_tra_codigo  
+   AND s_cocl_tipo_clase <> 'B'  
+   AND s_cocl_estado IN ('A','C')  
+ ORDER BY d_cocl_fecha DESC,  
+    d_cocl_clase_inicio DESC  
+END  

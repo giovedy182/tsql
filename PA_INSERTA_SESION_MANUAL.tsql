@@ -1,0 +1,169 @@
+CREATE PROCEDURE [dbo].[PA_INSERTA_SESION_MANUAL]  
+    @S_CLA_CRUCE VARCHAR(20) OUTPUT,  
+    @S_CLA_CODIGO VARCHAR(20),  
+    @S_TRA_CODIGO VARCHAR(20),  
+    @D_COCL_FECHA DATE,  
+    @S_COCL_TIPO_CLASE CHAR(1),  
+    @D_COCL_INICIO DATETIME,  
+    @D_COCL_TERMINO DATETIME,  
+    @S_COCL_OBSERVACIONES VARCHAR(500),  
+    @S_COCL_ESTADO CHAR(2),  
+    @AUDIT_USUARIO_CREACION VARCHAR(50)  
+AS  
+BEGIN  
+    SET NOCOUNT ON;  
+    SET XACT_ABORT ON;  
+    SET DATEFORMAT MDY;  
+  
+    DECLARE  
+        @TOPEMIN INT = -5,  
+        @TOPEMAX INT = 10;  
+  
+    DECLARE  
+        @N_COCL_NRODIA INT,  
+  @S_AUL_CODIGO VARCHAR(20),  
+        @D_COCL_CLASE_INICIOT DATETIME,  
+        @D_COCL_CLASE_TERMINOT DATETIME,  
+        @S_HOR_TIPO_REUNION VARCHAR(4);  
+  
+    BEGIN TRY  
+        BEGIN TRAN;  
+  
+        SET @S_CLA_CRUCE = '';  
+  
+        SELECT   
+            @N_COCL_NRODIA = SC.n_hor_dia,  
+            @S_AUL_CODIGO = SC.s_aul_codigo,  
+            @D_COCL_CLASE_INICIOT =  
+                DATEADD(DAY,  
+                    DATEDIFF(DAY, CAST(MIN(SC.d_hor_inicio) AS DATE), SC.d_hor_fecha),  
+                    MIN(SC.d_hor_inicio)  
+                ),  
+            @D_COCL_CLASE_TERMINOT =  
+                DATEADD(DAY,  
+                    DATEDIFF(DAY, CAST(MAX(SC.d_hor_final) AS DATE), SC.d_hor_fecha),  
+                    MAX(SC.d_hor_final)  
+                ),  
+            @S_HOR_TIPO_REUNION = SC.s_tipo_reunion  
+        FROM V_SESIONES_CLASE SC  
+        WHERE SC.s_cla_codigo = @S_CLA_CODIGO  
+          AND SC.s_tra_codigo = @S_TRA_CODIGO  
+          AND SC.d_hor_fecha = @D_COCL_FECHA  
+        GROUP BY  
+            SC.n_hor_dia,  
+            SC.s_aul_codigo,  
+            SC.d_hor_fecha,  
+            SC.s_tipo_reunion  
+        HAVING   
+            @D_COCL_INICIO BETWEEN  
+                DATEADD(MINUTE, @TOPEMIN,  
+                    DATEADD(DAY,  
+                        DATEDIFF(DAY, CAST(MIN(SC.d_hor_inicio) AS DATE), SC.d_hor_fecha),  
+                        MIN(SC.d_hor_inicio)  
+                    )  
+                )  
+                AND  
+                DATEADD(MINUTE, @TOPEMAX,  
+                    DATEADD(DAY,  
+                        DATEDIFF(DAY, CAST(MAX(SC.d_hor_final) AS DATE), SC.d_hor_fecha),  
+                        MAX(SC.d_hor_final)  
+                    )  
+                )  
+            AND  
+            @D_COCL_TERMINO BETWEEN  
+                DATEADD(MINUTE, @TOPEMIN,  
+                    DATEADD(DAY,  
+                        DATEDIFF(DAY, CAST(MIN(SC.d_hor_inicio) AS DATE), SC.d_hor_fecha),  
+                        MIN(SC.d_hor_inicio)  
+                    )  
+                )  
+                AND  
+                DATEADD(MINUTE, @TOPEMAX,  
+                    DATEADD(DAY,  
+                        DATEDIFF(DAY, CAST(MAX(SC.d_hor_final) AS DATE), SC.d_hor_fecha),  
+                        MAX(SC.d_hor_final)  
+                    )  
+                );  
+  
+        IF @D_COCL_FECHA > CAST(dbo.GetFechaPeru() AS DATE)  
+  BEGIN  
+   SET @S_CLA_CRUCE = 'FECHA_FUTURA';  
+   ROLLBACK TRAN;  
+   RETURN;  
+  END;  
+  
+  IF @D_COCL_CLASE_INICIOT IS NULL OR @D_COCL_CLASE_TERMINOT IS NULL  
+        BEGIN  
+            SET @S_CLA_CRUCE = 'SIN_HORARIO';  
+            ROLLBACK TRAN;  
+            RETURN;  
+        END;  
+  
+        IF EXISTS (  
+            SELECT 1  
+            FROM control_clase  
+            WHERE s_cla_codigo = @S_CLA_CODIGO  
+              AND s_tra_codigo = @S_TRA_CODIGO  
+              AND CAST(d_cocl_fecha AS DATE) = @D_COCL_FECHA  
+              AND d_cocl_clase_iniciot = @D_COCL_CLASE_INICIOT  
+              AND d_cocl_clase_terminot = @D_COCL_CLASE_TERMINOT  
+        )  
+        BEGIN  
+            SET @S_CLA_CRUCE = @S_CLA_CODIGO;  
+        END  
+        ELSE  
+        BEGIN  
+            INSERT INTO control_clase  
+            (  
+                s_cla_codigo,  
+                s_tra_codigo,  
+                d_cocl_fecha,  
+                s_cocl_tipo_clase,  
+                d_cocl_clase_inicio,  
+                d_cocl_clase_termino,  
+                n_cocl_nrodia,  
+                s_aul_codigo,  
+                d_cocl_clase_iniciot,  
+                d_cocl_clase_terminot,  
+                s_cocl_observaciones,  
+                s_cocl_tipo_cierre,  
+    s_cocl_estado,  
+                s_hor_tipo_reunion,  
+                audit_usuario_creacion,  
+    audit_fecha_creacion,  
+    audit_host_creacion  
+            )  
+            VALUES  
+            (  
+                @S_CLA_CODIGO,  
+                @S_TRA_CODIGO,  
+                @D_COCL_FECHA,  
+                @S_COCL_TIPO_CLASE,  
+                @D_COCL_INICIO,  
+                @D_COCL_TERMINO,  
+                @N_COCL_NRODIA,  
+                @S_AUL_CODIGO,  
+                @D_COCL_CLASE_INICIOT,  
+                @D_COCL_CLASE_TERMINOT,  
+                @S_COCL_OBSERVACIONES,  
+    @S_COCL_TIPO_CLASE,  
+                @S_COCL_ESTADO,  
+                @S_HOR_TIPO_REUNION,  
+                @AUDIT_USUARIO_CREACION,  
+    dbo.GetFechaPeru(),  
+    HOST_NAME()  
+            );  
+  
+            SET @S_CLA_CRUCE = '';  
+        END;  
+  
+        COMMIT TRAN;  
+    END TRY  
+    BEGIN CATCH  
+        IF @@TRANCOUNT > 0  
+            ROLLBACK TRAN;  
+  
+        SET @S_CLA_CRUCE = 'ERROR';  
+        THROW;  
+    END CATCH;  
+END;  

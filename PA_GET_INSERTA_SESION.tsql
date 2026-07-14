@@ -1,0 +1,43 @@
+CREATE PROCEDURE [dbo].[PA_GET_INSERTA_SESION]  
+ @S_CLA_CODIGO VARCHAR(20),  
+ @S_TRA_CODIGO VARCHAR(20),  
+ @S_COCL_TIPO_DOCENTE CHAR(1),  
+ @D_COCL_FECHA DATETIME,  
+ @S_COCL_TIPO_CLASE CHAR(1),  
+ @AUDIT_USUARIO_CREACION VARCHAR(150),  
+ @D_COCL_CLASE_INICIOT DATETIME,  
+ @D_COCL_CLASE_TERMINOT DATETIME,  
+ @S_AUL_CODIGO VARCHAR(20),  
+ @S_IP VARCHAR(150),  
+ @RECUPERACION_ID INT = NULL,  
+ @S_HOR_TIPO_REUNION VARCHAR(4),  
+ @UPDATED_ID INT OUTPUT  
+AS  
+BEGIN  
+    SET NOCOUNT ON;     SET XACT_ABORT ON;     SET DATEFIRST 1;      DECLARE @FECHA DATETIME = CAST(dbo.GetFechaPeru() AS DATETIME);     DECLARE @FECHA_SESION DATE = CONVERT(DATE, @D_COCL_FECHA);     DECLARE @N_COCL_NRODIA INT = DATEPART(WEEKDAY, @D_COCL_
+FECHA);     DECLARE @S_AULA_NORMALIZADA VARCHAR(20) = NULLIF(TRIM(@S_AUL_CODIGO), '');  
+  
+ DECLARE @SESIONES TABLE     (         n_orden                 INT IDENTITY(1,1),         d_clase_inicio          DATETIME,         d_clase_termino         DATETIME,         s_aul_codigo            VARCHAR(20),         s_hor_tipo_reunion      VARCHAR(4), 
+        UNIQUE         (             d_clase_inicio,             d_clase_termino,             s_aul_codigo,             s_hor_tipo_reunion         )     );  
+  
+ BEGIN TRY         BEGIN TRANSACTION;  
+  
+  INSERT INTO @SESIONES         (             d_clase_inicio,             d_clase_termino,             s_aul_codigo,             s_hor_tipo_reunion         )         VALUES         (             @D_COCL_CLASE_INICIOT,             @D_COCL_CLASE_TERMINOT,  
+           @S_AULA_NORMALIZADA,             @S_HOR_TIPO_REUNION         );  
+  
+  COMMIT TRANSACTION;     END TRY     BEGIN CATCH         IF @@TRANCOUNT > 0             ROLLBACK TRANSACTION;          THROW;     END CATCH;  
+  
+ --BEGIN TRAN;  
+  
+ --BEGIN TRY          --       SELECT @N_CONTROL_CLASE_ID_AUX = n_control_clase_id  --       FROM control_clase  --       WHERE s_cla_codigo = @S_CLA_CODIGO  --         AND s_tra_codigo = @S_TRA_CODIGO  --   AND CONVERT(DATE, d_cocl_fecha)          = CONV
+ERT(DATE, @D_COCL_FECHA)  
+ --   AND CONVERT(TIME, d_cocl_clase_iniciot)  = CONVERT(TIME, @D_COCL_CLASE_INICIOT)  
+ --   AND CONVERT(TIME, d_cocl_clase_terminot) = CONVERT(TIME, @D_COCL_CLASE_TERMINOT);   --       IF @N_CONTROL_CLASE_ID_AUX IS NOT NULL  --       BEGIN  --           SET @UPDATED_ID = @N_CONTROL_CLASE_ID_AUX;  --       END   --       ELSE  --       BEGI
+N  --  INSERT INTO control_clase  --  (  --   s_cla_codigo,  --   s_tra_codigo,  --   s_cocl_tipo_docente,  --   d_cocl_fecha,  --   s_cocl_tipo_clase,  --   d_cocl_clase_inicio,  --   n_cocl_nrodia,  --   s_aul_codigo,  --   d_cocl_clase_iniciot,  --   d
+_cocl_clase_terminot,  --   audit_fecha_creacion,  --   audit_usuario_creacion,  --   s_ip,  --   n_recuperacion_id,  --   s_hor_tipo_reunion  --  )  --           VALUES  --           (  --               @S_CLA_CODIGO,  --               @S_TRA_CODIGO,  --
+               @S_COCL_TIPO_DOCENTE,  --               @D_COCL_FECHA,  --               @S_COCL_TIPO_CLASE,  --               @FECHA,  --               @N_COCL_NRODIA,  --   NULLIF(TRIM(@S_AUL_CODIGO), ''),  --               @D_COCL_CLASE_INICIOT,  --    
+           @D_COCL_CLASE_TERMINOT,  --   dbo.GetFechaPeru(),  --               @AUDIT_USUARIO_CREACION,  --               @S_IP,  --               @RECUPERACION_ID,  --   @S_HOR_TIPO_REUNION  --           );   --           SET @UPDATED_ID = SCOPE_IDENTITY
+();  --       END   --       COMMIT TRAN;  --   END TRY  --   BEGIN CATCH  --       ROLLBACK TRAN;   --       DECLARE @ErrorMessage NVARCHAR(4000);  --       DECLARE @ErrorSeverity INT;  --       DECLARE @ErrorState INT;   --       SELECT   --           @
+ErrorMessage = ERROR_MESSAGE(),  --           @ErrorSeverity = ERROR_SEVERITY(),  --           @ErrorState = ERROR_STATE();   --       RAISERROR (  --           @ErrorMessage,  --           @ErrorSeverity,  --           @ErrorState  --       );  --   END 
+CATCH  
+END;  

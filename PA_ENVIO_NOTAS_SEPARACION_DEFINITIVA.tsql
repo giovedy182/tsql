@@ -1,0 +1,49 @@
+CREATE   PROCEDURE [dbo].[PA_ENVIO_NOTAS_SEPARACION_DEFINITIVA]  
+    @S_ALU_CODIGO VARCHAR(20),  
+    @S_SEM_CODIGO VARCHAR(20)  
+AS  
+BEGIN  
+    SET NOCOUNT ON;  
+  
+    SELECT  
+        s.s_sem_codigo AS S_SEM_CODIGO,  
+        an.s_cla_codigo AS S_CLA_CODIGO,  
+        an.s_alu_codigo AS IdBanner,  
+        an.n_alno_promedio AS N_ALNO_PROMEDIO,  
+        CASE  
+            WHEN ISNULL(an.b_alno_sancion, 0) = 1 AND an.n_alno_promedio = 0 THEN '0SAN'  
+            ELSE CONVERT(VARCHAR(32), an.n_alno_promedio)  
+        END AS NOTA_ENVIO,  
+        (  
+            SELECT TOP (1)  
+                and_det.n_nota_motivo_id  
+            FROM dbo.alumno_nota_detalle AS and_det  
+            WHERE and_det.n_alumno_nota_id = an.n_alumno_nota_id  
+              AND and_det.n_nota_motivo_id IS NOT NULL  
+            ORDER BY and_det.audit_fecha_creacion DESC  
+        ) AS N_NOTA_MOTIVO_ID,  
+        COALESCE(an.audit_usuario_actualizacion, an.audit_usuario_creacion, N'') AS AUDIT_USUARIO  
+    FROM dbo.alumno_nota AS an  
+    INNER JOIN dbo.semestre AS s  
+        ON s.n_semestre_id = an.n_semestre_id  
+    WHERE an.s_alu_codigo = @S_ALU_CODIGO  
+      AND s.s_sem_codigo = @S_SEM_CODIGO  
+      AND s.n_sem_estado = 1  
+      AND an.b_alno_sancion = 1  
+      AND an.n_alno_promedio = 0  
+      AND EXISTS (  
+          SELECT 1  
+          FROM dbo.matricula_detalle AS md  
+          WHERE md.s_alu_codigo = an.s_alu_codigo  
+            AND md.s_cla_codigo = an.s_cla_codigo  
+            AND md.s_sem_codigo = s.s_sem_codigo  
+            AND RTRIM(LTRIM(UPPER(md.s_made_estado))) <> N'RET'  
+      )  
+      AND NOT EXISTS (  
+          SELECT 1  
+          FROM dbo.alumno_nota_detalle AS d  
+          WHERE d.n_alumno_nota_id = an.n_alumno_nota_id  
+            AND ISNULL(d.b_alnode_evaluacion_investigacion, 0) = 1  
+      )  
+    ORDER BY an.s_cla_codigo;  
+END;  

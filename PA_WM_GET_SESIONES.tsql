@@ -1,0 +1,35 @@
+CREATE PROCEDURE [dbo].[PA_WM_GET_SESIONES]  
+ @s_tra_codigo varchar(20)  
+AS  
+BEGIN  
+ SELECT  
+  CC.n_control_clase_id,  
+  SC.s_cla_codigo,  
+  SC.s_cur_codigo,  
+  CU.s_cur_nombre,  
+  SC.s_dep_codigo,  
+  SC.s_dep_nombre,  
+  SD.s_sed_codigo,  
+  SM.s_sem_codigo,  
+  SC.s_aul_codigo,  
+  DATEADD(DAY,DATEDIFF(DAY,SC.d_hor_inicio,SC.d_hor_fecha),SC.d_hor_inicio) AS D_HOR_INICIO,  
+  DATEADD(DAY,DATEDIFF(DAY,SC.d_hor_final,SC.d_hor_fecha),SC.d_hor_final) AS D_HOR_FINAL,  
+  SC.s_tipo_docente AS S_CLDO_TIPO,  
+  SC.s_tipo_reunion AS S_SES_TIPO  
+ FROM V_SESIONES_CLASE SC  
+ INNER JOIN control_clase CC  
+  ON CC.s_cla_codigo = SC.s_cla_codigo   
+    AND CC.s_tra_codigo = SC.s_tra_codigo  
+    AND CONVERT(DATE, CC.d_cocl_fecha)          = CONVERT(DATE, SC.d_hor_fecha)     AND CONVERT(TIME, CC.d_cocl_clase_iniciot)  = CONVERT(TIME, SC.d_hor_inicio)     AND CONVERT(TIME, CC.d_cocl_clase_terminot) = CONVERT(TIME, SC.d_hor_final)  
+ INNER JOIN semestre SM   ON SM.n_semestre_id = SC.n_semestre_id        --AND @fecha BETWEEN SM.d_sem_finicio AND SM.d_sem_ftermino        AND SM.n_sem_estado = 1  
+ INNER JOIN sede SD   
+  ON SD.n_sede_id = SM.n_sede_id  
+ INNER JOIN curso CU  
+  ON CU.s_cur_codigo = SC.s_cur_codigo  
+    AND CU.s_dep_codigo = SC.s_dep_codigo  
+    AND CAST(SM.s_sem_codigo AS INT) >= CAST(CU.s_sem_inicio AS INT)  
+    AND CAST(SM.s_sem_codigo AS INT) <= CAST(CU.s_sem_fin AS INT)  
+ WHERE CC.s_tra_codigo = @s_tra_codigo  
+   AND CC.s_cocl_estado = 'A'   
+   AND CC.s_cocl_estado_proceso <> 'B'  
+END;  

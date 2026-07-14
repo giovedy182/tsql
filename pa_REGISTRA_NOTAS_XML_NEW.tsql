@@ -1,0 +1,281 @@
+CREATE   PROCEDURE[dbo].[pa_REGISTRA_NOTAS_XML_NEW]    
+    @S_CLA_CODIGO VARCHAR(20),    
+    @XMLDATA XML,    
+    @IP VARCHAR(20) = NULL    
+AS    
+BEGIN    
+    SET NOCOUNT ON;    
+    
+    DECLARE    
+        @IDOC INT,    
+        @N_SEMESTRE_ID INT,    
+        @BAND INT = 0;    
+    
+    DECLARE @TDATA TABLE    
+    (    
+        S_CLA_CODIGO VARCHAR(20),    
+        S_ALU_CODIGO VARCHAR(20),    
+        N_NOTA_ID INT,    
+        N_ALNODE_VALOR DECIMAL(5, 2),    
+        N_NOTA_MOTIVO_ID INT NULL,    
+        AUDIT_USUARIO VARCHAR(150)    
+    );    
+    
+    EXEC sp_xml_preparedocument @IDOC OUTPUT, @XMLDATA;    
+    
+    IF EXISTS (SELECT 1 FROM dbo.clase WHERE s_cla_codigo = @S_CLA_CODIGO)    
+    BEGIN    
+        SET @BAND = 1;    
+    
+        SELECT @N_SEMESTRE_ID = n_semestre_id    
+        FROM dbo.clase    
+        WHERE s_cla_codigo = @S_CLA_CODIGO;    
+    END    
+    ELSE    
+    BEGIN    
+        SET @BAND = 0;    
+        SET @N_SEMESTRE_ID = NULL;    
+    END    
+    
+    INSERT INTO @TDATA    
+    SELECT    
+        s_cla_codigo,    
+        s_alu_codigo,    
+        n_nota_id,    
+        n_alnode_valor,    
+        CASE    
+            WHEN NULLIF(n_nota_motivo_id, '') IS NULL THEN NULL    
+            ELSE TRY_CONVERT(INT, n_nota_motivo_id)    
+        END AS n_nota_motivo_id,    
+        audit_usuario    
+    FROM OPENXML(@IDOC, '/registro/nota', 1)    
+    WITH    
+    (    
+        s_cla_codigo VARCHAR(20),    
+        s_alu_codigo VARCHAR(20),    
+        n_nota_id INT,    
+        n_alnode_valor DECIMAL(5, 2),    
+        n_nota_motivo_id VARCHAR(20),    
+        audit_usuario VARCHAR(150)    
+    );    
+    
+    EXEC sp_xml_removedocument @IDOC;    
+    
+    IF @BAND = 1 AND EXISTS (SELECT 1 FROM @TDATA)    
+    BEGIN    
+        IF EXISTS (    
+                SELECT 1    
+                FROM @TDATA AS d    
+                INNER JOIN dbo.clase AS cl    
+                    ON cl.s_cla_codigo = @S_CLA_CODIGO    
+                INNER JOIN dbo.matricula_detalle AS md    
+                    ON md.s_alu_codigo = d.s_alu_codigo    
+                   AND md.s_cla_codigo = @S_CLA_CODIGO    
+                INNER JOIN dbo.semestre AS s    
+                    ON s.s_sem_codigo = md.s_sem_codigo    
+                   AND s.n_sem_estado = 1    
+                   AND s.n_semestre_id = cl.n_semestre_id    
+                WHERE RTRIM(LTRIM(UPPER(md.s_made_estado))) = N'RET'    
+            )    
+            THROW 50001, N'No se permite registrar notas para alumnos con estado RET en esta clase.', 1;    
+    
+        IF EXISTS (    
+                SELECT 1    
+                FROM @TDATA AS d    
+                INNER JOIN dbo.alumno_nota AS an    
+                    ON an.s_alu_codigo = d.s_alu_codigo    
+                   AND an.s_cla_codigo = @S_CLA_CODIGO    
+                   AND an.n_semestre_id = @N_SEMESTRE_ID    
+                WHERE ISNULL(an.b_alno_sancion, 0) = 1    
+            )    
+            THROW 50002, N'No se permite registrar notas: alumno con sanción de separación definitiva en la clase.', 1;    
+    
+        IF EXISTS (    
+                SELECT 1    
+                FROM @TDATA AS d    
+                INNER JOIN dbo.alumno_nota AS an    
+                    ON an.s_alu_codigo = d.s_alu_codigo    
+                   AND an.s_cla_codigo = @S_CLA_CODIGO    
+                   AND an.n_semestre_id = @N_SEMESTRE_ID    
+                INNER JOIN dbo.alumno_nota_detalle AS andd    
+                    ON andd.n_alumno_nota_id = an.n_alumno_nota_id    
+                   AND andd.n_nota_id = d.n_nota_id    
+                WHERE ISNULL(andd.b_alnode_sancion, 0) = 1    
+                   OR ISNULL(andd.b_alnode_evaluacion_investigacion, 0) = 1    
+            )    
+            THROW 50003, N'No se permite registrar notas: evaluación sancionada o en investigación.', 1;  
+          
+    END;    
+    
+    BEGIN TRAN;    
+    
+    BEGIN TRY    
+        IF @BAND = 1    
+        BEGIN    
+            ;WITH SrcNota AS    
+            (    
+                SELECT DISTINCT    
+                    d.s_cla_codigo,    
+                    d.s_alu_codigo,    
+                    d.n_nota_id,    
+                    d.n_alnode_valor,    
+                    d.n_nota_motivo_id,    
+                    d.audit_usuario    
+                FROM @TDATA d    
+        )    
+            MERGE dbo.alumno_nota AS T    
+            USING SrcNota AS S    
+            ON    
+                T.s_cla_codigo = S.s_cla_codigo    
+                AND T.s_alu_codigo = S.s_alu_codigo    
+                AND T.n_semestre_id = @N_SEMESTRE_ID    
+            WHEN NOT MATCHED BY TARGET THEN    
+                INSERT (n_semestre_id, s_alu_codigo, s_cla_codigo, audit_usuario_creacion, audit_fecha_creacion)    
+                VALUES (@N_SEMESTRE_ID, S.s_alu_codigo, S.s_cla_codigo, S.audit_usuario, dbo.GetFechaPeru());    
+    
+            ;WITH SrcDetalle AS    
+            (    
+                SELECT    
+                    AN.n_alumno_nota_id,    
+                    D.n_nota_id,    
+                    D.n_alnode_valor,    
+                    D.n_nota_motivo_id,    
+                    D.audit_usuario    
+                FROM @TDATA D    
+                INNER JOIN dbo.alumno_nota AN    
+                    ON AN.s_cla_codigo = D.s_cla_codigo    
+                    AND AN.s_alu_codigo = D.s_alu_codigo    
+                    AND AN.n_semestre_id = @N_SEMESTRE_ID  
+  
+                -- DPI: Excluir alumnos con DPI aplicado  
+                WHERE NOT EXISTS (  
+                    SELECT 1  
+                    FROM dbo.alumno_nota_detalle andd  
+                    INNER JOIN dbo.dpi_alumno da  
+                        ON da.n_alumno_nota_detalle_id = andd.n_alumno_nota_detalle_id  
+                       AND da.b_dpi_aplicado           = 1  
+                    WHERE andd.n_alumno_nota_id = AN.n_alumno_nota_id  
+                      AND andd.n_nota_id        = D.n_nota_id  
+                )  
+            )    
+            MERGE dbo.alumno_nota_detalle AS T    
+            USING SrcDetalle AS S    
+            ON    
+                T.n_alumno_nota_id = S.n_alumno_nota_id    
+                AND T.n_nota_id = S.n_nota_id    
+            WHEN MATCHED THEN    
+                UPDATE SET    
+                    T.n_alnode_valor = S.n_alnode_valor,    
+                    T.n_nota_motivo_id = S.n_nota_motivo_id,    
+                    T.audit_usuario_actualizacion = S.audit_usuario,    
+                    T.audit_fecha_actualizacion = dbo.GetFechaPeru(),    
+                    T.s_alnode_ip_actualizacion = @IP    
+            WHEN NOT MATCHED BY TARGET THEN    
+                INSERT (    
+                    n_alumno_nota_id,    
+                    n_nota_id,    
+                    n_alnode_valor,    
+                    n_nota_motivo_id,    
+                    audit_usuario_creacion,    
+                    audit_fecha_creacion,    
+                    s_alnode_ip_creacion    
+                )    
+                VALUES (    
+                    S.n_alumno_nota_id,    
+                    S.n_nota_id,    
+                    S.n_alnode_valor,    
+                    S.n_nota_motivo_id,    
+                    S.audit_usuario,    
+                    dbo.GetFechaPeru(),    
+                    @IP    
+                );    
+        END;    
+    
+        DECLARE @T_PROMEDIOS TABLE    
+        (    
+            n_alumno_nota_id INT PRIMARY KEY,    
+            s_alu_codigo VARCHAR(20),    
+            s_cla_codigo VARCHAR(20),    
+            n_alno_promedio DECIMAL(5, 2)    
+        );    
+    
+        INSERT INTO @T_PROMEDIOS (n_alumno_nota_id, s_alu_codigo, s_cla_codigo, n_alno_promedio)    
+        SELECT    
+            AN.n_alumno_nota_id,    
+            AN.s_alu_codigo,    
+            AN.s_cla_codigo,    
+            ISNULL(    
+                ROUND(    
+                    SUM(    
+                        CAST(    
+                            CASE    
+                                WHEN ISNULL(ANDD.b_alnode_evaluacion_investigacion, 0) = 1 THEN 0    
+                                WHEN ISNULL(ANDD.b_alnode_sancion, 0) = 1 THEN 0    
+                                ELSE ISNULL(ANDD.n_alnode_valor, 0)    
+                            END AS DECIMAL(18, 6)    
+                        ) * CAST(ISNULL(CN.n_clno_peso, 0) AS DECIMAL(18, 6))    
+                    ),    
+                    0    
+                ),    
+                0    
+            ) AS n_alno_promedio    
+        FROM dbo.alumno_nota AN    
+        INNER JOIN dbo.alumno_nota_detalle ANDD    
+            ON ANDD.n_alumno_nota_id = AN.n_alumno_nota_id    
+        RIGHT JOIN dbo.clase_nota CN    
+            ON ANDD.n_nota_id = CN.n_nota_id    
+            AND AN.s_cla_codigo = CN.s_cla_codigo    
+        INNER JOIN dbo.nota N    
+            ON N.n_nota_id = CN.n_nota_id    
+        WHERE    
+            AN.s_cla_codigo = @S_CLA_CODIGO    
+            AND ISNULL(AN.b_alno_sancion, 0) = 0    
+            AND N.s_not_tipo IN ('T', 'E')    
+            AND N.n_not_estado = 1    
+            AND CN.n_clno_estado = 1    
+            AND CN.n_clno_peso > 0    
+        GROUP BY    
+            AN.n_alumno_nota_id,    
+            AN.s_alu_codigo,    
+            AN.s_cla_codigo;    
+    
+        DECLARE @audit_usuario_prom VARCHAR(150) =    
+        (    
+            SELECT TOP (1)    
+                NULLIF(LTRIM(RTRIM(AUDIT_USUARIO)), '')    
+            FROM @TDATA    
+        );    
+    
+        SET @audit_usuario_prom = ISNULL(@audit_usuario_prom, USER_NAME());    
+    
+        DECLARE @audit_host_prom VARCHAR(20) =    
+            LEFT(ISNULL(NULLIF(LTRIM(RTRIM(@IP)), ''), HOST_NAME()), 20);    
+    
+        UPDATE AN    
+        SET    
+            AN.n_alno_promedio = TP.n_alno_promedio,    
+            AN.audit_usuario_actualizacion = @audit_usuario_prom,    
+            AN.audit_fecha_actualizacion = dbo.GetFechaPeru(),    
+            AN.audit_host_actualizacion = @audit_host_prom    
+        FROM dbo.alumno_nota AN    
+        INNER JOIN @T_PROMEDIOS TP    
+            ON TP.n_alumno_nota_id = AN.n_alumno_nota_id;    
+    
+        COMMIT TRAN;    
+    END TRY    
+    BEGIN CATCH    
+        IF @@TRANCOUNT > 0    
+            ROLLBACK TRAN;    
+    
+        DECLARE @ErrorMessage NVARCHAR(4000);    
+        DECLARE @ErrorSeverity INT;    
+        DECLARE @ErrorState INT;    
+    
+        SELECT    
+            @ErrorMessage = ERROR_MESSAGE(),    
+            @ErrorSeverity = ERROR_SEVERITY(),    
+            @ErrorState = ERROR_STATE();    
+    
+        RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);    
+    END CATCH    
+END;    

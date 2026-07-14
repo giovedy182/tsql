@@ -1,0 +1,54 @@
+CREATE   PROCEDURE dbo.PA_ENVIO_NOTAS_CLASE  
+    @S_CLA_CODIGO VARCHAR(20)  
+AS  
+BEGIN  
+    SET NOCOUNT ON;  
+  
+    ;WITH UltimoMotivo AS (  
+        SELECT  
+            and_det.n_alumno_nota_id,  
+            and_det.n_nota_motivo_id,  
+            ROW_NUMBER() OVER (  
+                PARTITION BY and_det.n_alumno_nota_id  
+                ORDER BY and_det.audit_fecha_creacion DESC  
+            ) AS rn  
+        FROM dbo.alumno_nota_detalle AS and_det  
+        INNER JOIN dbo.alumno_nota AS an_mot  
+            ON an_mot.n_alumno_nota_id = and_det.n_alumno_nota_id  
+        WHERE an_mot.s_cla_codigo = @S_CLA_CODIGO  
+          AND and_det.n_nota_motivo_id IS NOT NULL  
+    )  
+    SELECT  
+        s.s_sem_codigo AS S_SEM_CODIGO,  
+        an.s_cla_codigo AS S_CLA_CODIGO,  
+        an.s_alu_codigo AS IdBanner,  
+        an.n_alno_promedio AS N_ALNO_PROMEDIO,  
+        CASE  
+            WHEN ISNULL(an.b_alno_sancion, 0) = 1 AND an.n_alno_promedio = 0 THEN '0SAN'  
+            ELSE CONVERT(VARCHAR(32), an.n_alno_promedio)  
+        END AS NOTA_ENVIO,  
+        um.n_nota_motivo_id AS N_NOTA_MOTIVO_ID,  
+        COALESCE(an.audit_usuario_actualizacion, an.audit_usuario_creacion, N'') AS AUDIT_USUARIO  
+    FROM dbo.alumno_nota AS an  
+    INNER JOIN dbo.semestre AS s  
+        ON s.n_semestre_id = an.n_semestre_id  
+    LEFT JOIN UltimoMotivo AS um  
+        ON um.n_alumno_nota_id = an.n_alumno_nota_id  
+       AND um.rn = 1  
+    WHERE an.s_cla_codigo = @S_CLA_CODIGO  
+      AND EXISTS (  
+          SELECT 1  
+          FROM dbo.matricula_detalle AS md  
+          WHERE md.s_alu_codigo = an.s_alu_codigo  
+            AND md.s_cla_codigo = an.s_cla_codigo  
+            AND md.s_sem_codigo = s.s_sem_codigo  
+            AND RTRIM(LTRIM(UPPER(md.s_made_estado))) <> N'RET'  
+      )  
+      AND NOT EXISTS (  
+          SELECT 1  
+          FROM dbo.alumno_nota_detalle AS and_det  
+          WHERE and_det.n_alumno_nota_id = an.n_alumno_nota_id  
+            AND ISNULL(and_det.b_alnode_evaluacion_investigacion, 0) = 1  
+      )  
+    ORDER BY an.s_alu_codigo;  
+END;  

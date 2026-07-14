@@ -1,0 +1,158 @@
+CREATE   PROCEDURE[dbo].[pa_REGISTRA_ASISTENCIA_XML]  
+    @N_SEMESTRE_ID   INT,  
+    @D_ALAS_FECHA    DATETIME,  
+    @XMLDATA         NTEXT,  
+    @ControlClaseID  INT  
+AS  
+BEGIN  
+    SET NOCOUNT ON;  
+  
+    DECLARE @IDOC INT;  
+    DECLARE @BAND INT;  
+    DECLARE @N_CONTROL_CLASE_ID_AUX INT;  
+  
+    DECLARE @TDATA TABLE  
+    (  
+        N_CONTROL_CLASE_ID  INT,  
+        S_ALU_CODIGO        VARCHAR(20),  
+        S_CLA_CODIGO        VARCHAR(20),  
+        S_ALAS_CONTROL      CHAR(1),  
+        AUDIT_USUARIO       VARCHAR(150)  
+    );  
+  
+    BEGIN TRAN;  
+  
+    BEGIN TRY  
+  
+        EXEC sp_xml_preparedocument @IDOC OUTPUT, @XMLDATA;  
+  
+        SELECT DISTINCT  
+            @N_CONTROL_CLASE_ID_AUX = ISNULL(AA1.n_control_clase_id, CC2.n_control_clase_id)  
+        FROM control_clase CC1  
+        LEFT JOIN alumno_asistencia AA1  
+            ON CC1.n_control_clase_id = AA1.n_control_clase_id  
+        LEFT JOIN control_clase CC2  
+            ON CC1.s_cla_codigo = CC2.s_cla_codigo  
+           AND CC1.d_cocl_fecha = CC2.d_cocl_fecha  
+           AND CC1.d_cocl_clase_iniciot = CC2.d_cocl_clase_iniciot  
+           AND CC1.s_tra_codigo <> CC2.s_tra_codigo  
+        WHERE CC1.n_control_clase_id = @ControlClaseID;  
+  
+        IF @N_CONTROL_CLASE_ID_AUX IS NOT NULL  
+        BEGIN  
+            INSERT INTO @TDATA  
+            (  
+                N_CONTROL_CLASE_ID,  
+                S_ALU_CODIGO,  
+                S_CLA_CODIGO,  
+                S_ALAS_CONTROL,  
+                AUDIT_USUARIO  
+            )  
+            SELECT  
+                @N_CONTROL_CLASE_ID_AUX,  
+                s_alu_codigo,  
+                s_cla_codigo,  
+                s_alas_control,  
+                audit_usuario  
+            FROM OPENXML(@IDOC, '/registro/asistencia', 1)  
+            WITH  
+            (  
+                n_control_clase_id  INT,  
+                s_alu_codigo        VARCHAR(20),  
+                s_cla_codigo        VARCHAR(20),  
+                s_alas_control      CHAR(1),  
+                audit_usuario       VARCHAR(20)  
+            );  
+        END  
+        ELSE  
+        BEGIN  
+            INSERT INTO @TDATA  
+            (  
+                N_CONTROL_CLASE_ID,  
+                S_ALU_CODIGO,  
+                S_CLA_CODIGO,  
+                S_ALAS_CONTROL,  
+                AUDIT_USUARIO  
+            )  
+            SELECT  
+                n_control_clase_id,  
+                s_alu_codigo,  
+                s_cla_codigo,  
+                s_alas_control,  
+                audit_usuario  
+            FROM OPENXML(@IDOC, '/registro/asistencia', 1)  
+            WITH  
+            (  
+                n_control_clase_id  INT,  
+                s_alu_codigo        VARCHAR(20),  
+                s_cla_codigo        VARCHAR(20),  
+                s_alas_control      CHAR(1),  
+                audit_usuario       VARCHAR(20)  
+            );  
+        END;  
+  
+        EXEC sp_xml_removedocument @IDOC;  
+  
+        MERGE alumno_asistencia AS T  
+        USING  
+        (  
+            SELECT *  
+            FROM @TDATA  
+        ) AS S  
+            ON T.n_control_clase_id = S.n_control_clase_id  
+           AND T.s_alu_codigo = S.s_alu_codigo  
+        WHEN MATCHED  
+             AND T.s_alas_control <> S.s_alas_control  
+        THEN  
+            UPDATE SET  
+                T.s_alas_control = S.s_alas_control,  
+                T.audit_usuario_actualizacion = S.audit_usuario,  
+    T.audit_fecha_actualizacion = dbo.GetFechaPeru(),  
+    T.audit_host_actualizacion = HOST_NAME()  
+        WHEN NOT MATCHED BY TARGET  
+        THEN  
+            INSERT  
+            (  
+                n_control_clase_id,  
+                n_semestre_id,  
+                d_alas_fecha,  
+                s_alu_codigo,  
+                s_cla_codigo,  
+                s_alas_control,  
+                audit_usuario_creacion  
+            )  
+            VALUES  
+            (  
+                S.n_control_clase_id,  
+                @N_SEMESTRE_ID,  
+                @D_ALAS_FECHA,  
+                S.s_alu_codigo,  
+                S.s_cla_codigo,                  S.s_alas_control,  
+                S.audit_usuario  
+            );  
+  
+        COMMIT TRAN;  
+  
+    END TRY  
+    BEGIN CATCH  
+  
+        ROLLBACK TRAN;  
+  
+        DECLARE @ErrorMessage NVARCHAR(4000);  
+        DECLARE @ErrorSeverity INT;  
+        DECLARE @ErrorState INT;  
+  
+        SELECT  
+            @ErrorMessage = ERROR_MESSAGE(),  
+            @ErrorSeverity = ERROR_SEVERITY(),  
+            @ErrorState = ERROR_STATE();  
+  
+        RAISERROR  
+        (  
+            @ErrorMessage,  
+            @ErrorSeverity,  
+            @ErrorState  
+        );  
+  
+    END CATCH;  
+END;  

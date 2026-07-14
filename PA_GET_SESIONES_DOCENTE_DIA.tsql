@@ -1,0 +1,31 @@
+CREATE PROCEDURE [dbo].[PA_GET_SESIONES_DOCENTE_DIA]     @s_tra_codigo VARCHAR(20) AS BEGIN  
+    SET NOCOUNT ON;     SET DATEFORMAT YMD;     SET DATEFIRST 1;      DECLARE @HorInicio TIME = '07:00:00';     DECLARE @fecha DATE;     DECLARE @dia INT;   SET @fecha = CONVERT(DATE, dbo.GetFechaPeru());      SET @dia = DATEPART(WEEKDAY, @fecha);   
+      
+    DECLARE @THORARIO TABLE (         ID INT IDENTITY,         S_CLA_CODIGO VARCHAR(20),         S_CUR_CODIGO VARCHAR(9),         S_CUR_NOMBRE VARCHAR(100),         S_DEP_CODIGO VARCHAR(8),         S_DEP_NOMBRE VARCHAR(100),         S_SED_CODIGO VARCHAR(1
+0),         S_SEM_CODIGO VARCHAR(12),         S_AUL_CODIGO VARCHAR(20),         S_CLDO_TIPO VARCHAR(4),         N_HOR_DIA INT,         D_HOR_FECHA DATE,         D_HOR_INICIO DATETIME,         D_HOR_FINAL DATETIME,         COMPARTIDA BIT,         N_HOR_MIN
+UTOS INT,         S_CLA_LST_CRUZADA VARCHAR(20),         S_SES_TIPO VARCHAR(8),   B_ES_FERIADO BIT     );  
+   
+ INSERT INTO @THORARIO     SELECT         SC.s_cla_codigo,         SC.s_cur_codigo,         CU.s_cur_nombre,         SC.s_dep_codigo,         SC.s_dep_nombre,         SD.s_sed_codigo,         SM.s_sem_codigo,         SC.s_aul_codigo,         SC.s_tipo_doc
+ente,         SC.n_hor_dia,         SC.d_hor_fecha,         DATEADD(DAY, DATEDIFF(DAY, SC.d_hor_inicio, SC.d_hor_fecha), SC.d_hor_inicio),         DATEADD(DAY, DATEDIFF(DAY, SC.d_hor_final, SC.d_hor_fecha), SC.d_hor_final),         0,         SC.n_hor_min
+utos,         SC.s_cla_lst_cruzada,         SC.s_tipo_reunion,   SC.b_es_feriado     FROM V_SESIONES_CLASE SC  INNER JOIN semestre SM   ON SM.n_semestre_id = SC.n_semestre_id     AND @fecha BETWEEN SM.d_sem_finicio AND SM.d_sem_ftermino     AND SM.n_sem_e
+stado = 1  INNER JOIN sede SD   ON SD.n_sede_id = SM.n_sede_id  INNER JOIN curso CU   ON CU.s_cur_codigo = SC.s_cur_codigo  
+    AND CU.s_dep_codigo = SC.s_dep_codigo  
+    AND CAST(SM.s_sem_codigo AS INT) >= CAST(CU.s_sem_inicio AS INT)     AND CAST(SM.s_sem_codigo AS INT) <= CAST(CU.s_sem_fin AS INT)     WHERE SC.s_tra_codigo = @s_tra_codigo       AND SC.d_hor_fecha = @fecha       AND SC.n_hor_dia = @dia       AND SC.s
+_tipo_reunion NOT IN ('RE', 'AD')    AND CAST(SC.d_hor_inicio AS TIME) >= @HorInicio       AND (ISNULL(SC.n_det_matricula, 0) > 0 OR SC.s_cur_codigo = 'EDGE0000')     GROUP BY         SC.s_cla_codigo,         SC.s_cur_codigo,         CU.s_cur_nombre,     
+    SC.s_dep_codigo,         SC.s_dep_nombre,         SD.s_sed_codigo,         SM.s_sem_codigo,         SC.s_tipo_docente,         SC.n_hor_dia,         SC.d_hor_fecha,         SC.d_hor_inicio,         SC.d_hor_final,         SC.s_aul_codigo,         SC.n
+_hor_minutos,         SC.s_cla_lst_cruzada,         SC.s_tipo_reunion,  
+  SC.b_es_feriado;  
+  
+ -- Identifica las clase compartidas  
+ DECLARE @MIN INT = 1;  DECLARE @MAX INT = (SELECT MAX(ID) FROM @THORARIO);   WHILE @MIN <= @MAX  BEGIN   DECLARE @s_cla_codigo VARCHAR(40);   DECLARE @d_hor_inicio DATETIME;   DECLARE @s_cla_lst_cruzada VARCHAR(20);          SELECT             @s_cla_cod
+igo = S_CLA_CODIGO,             @d_hor_inicio = D_HOR_INICIO,             @s_cla_lst_cruzada = S_CLA_LST_CRUZADA         FROM @THORARIO         WHERE ID = @MIN;          UPDATE @THORARIO         SET COMPARTIDA = 1         WHERE S_CLA_CODIGO <> @s_cla_codi
+go           AND D_HOR_INICIO = @d_hor_inicio           AND S_CLA_LST_CRUZADA = @s_cla_lst_cruzada     AND CAST(S_CLA_CODIGO AS BIGINT) > CAST(@s_cla_codigo AS BIGINT);          SET @MIN = @MIN + 1;     END;      DELETE FROM @THORARIO     WHERE COMPARTIDA
+ = 1;  
+   
+ -- Resultado final    
+ SELECT         A.S_CLA_CODIGO,         A.S_CUR_CODIGO,         A.S_CUR_NOMBRE,         A.S_DEP_CODIGO,         A.S_DEP_NOMBRE,         A.S_SED_CODIGO,         A.S_SEM_CODIGO,         A.S_AUL_CODIGO,         A.S_CLDO_TIPO,         A.N_HOR_DIA,         A.D
+_HOR_FECHA,         CONVERT(VARCHAR(5), A.D_HOR_INICIO, 108) AS D_HOR_INICIO,         CONVERT(VARCHAR(5), A.D_HOR_FINAL, 108) AS D_HOR_FINAL,   A.N_HOR_MINUTOS,         A.S_SES_TIPO,   A.B_ES_FERIADO     FROM @THORARIO A     WHERE A.D_HOR_FINAL >= dbo.Get
+FechaPeru()       AND NOT EXISTS (             SELECT 1             FROM control_clase CC             WHERE CC.s_cla_codigo = A.S_CLA_CODIGO      AND CC.s_tra_codigo = @s_tra_codigo      AND CONVERT(DATE, CC.d_cocl_fecha)          = CONVERT(DATE, A.D_HOR_
+FECHA)      AND CONVERT(TIME, CC.d_cocl_clase_iniciot)  = CONVERT(TIME, A.D_HOR_INICIO)      AND CONVERT(TIME, CC.d_cocl_clase_terminot) = CONVERT(TIME, A.D_HOR_FINAL)       )     ORDER BY         A.D_HOR_INICIO,         A.D_HOR_FINAL,         A.S_CLA_COD
+IGO;  
+END;  

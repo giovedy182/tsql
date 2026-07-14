@@ -1,0 +1,318 @@
+  
+CREATE PROCEDURE [dbo].[PA_ASISTENCIA_PLANILLA]    
+    @N_CONTROL_CLASE_ID INT    
+AS    
+BEGIN    
+    SET NOCOUNT ON;    
+    SET DATEFORMAT YMD;    
+    SET DATEFIRST 1;    
+    
+    ---------------------------------------------------------    
+    -- VARIABLES    
+    ---------------------------------------------------------    
+    DECLARE    
+        @CLASE VARCHAR(20),    
+        @S_TRA_CODIGO VARCHAR(20),    
+        @FECHA DATETIME,    
+        @NRO_DIA INT,    
+        @SEMESTRE INT,    
+        @COD_SEMESTRE VARCHAR(20),    
+  @SEM_TIPO VARCHAR(2),    
+        @HINI DATETIME,    
+        @TOPEMIN INT = -5,    
+        @TOPEMAX INT = 10,    
+        --@FECHA_CONTROL DATETIME,    
+        @N_SEDE_ID INT,      
+        @N_CONTROL_CLASE_ID_AUX INT,    
+        @FECHA_HORA_INICIO_PROGRAMADO DATETIME,    
+  @S_HOR_TIPO_REUNION VARCHAR(4);    
+    
+    ---------------------------------------------------------    
+    -- TABLAS TEMPORALES    
+    ---------------------------------------------------------    
+    --DECLARE @TCLASE TABLE    
+    --(    
+    --    S_CLA_CODIGO VARCHAR(20)    
+    --);    
+    
+    DECLARE @TEMCLASE TABLE    
+    (    
+        S_CLA_CODIGO VARCHAR(20),    
+        S_CLA_TIPO VARCHAR(20)    
+    );    
+    
+    DECLARE @TRETIROS TABLE    
+    (    
+        S_ALU_CODIGO VARCHAR(20),    
+        B_ARS_ESTADO INT    
+    );    
+    
+    ---------------------------------------------------------    
+    -- OBTENER CONTROL CLASE REAL    
+    ---------------------------------------------------------    
+    SELECT DISTINCT    
+        @N_CONTROL_CLASE_ID_AUX = ISNULL(AA1.N_CONTROL_CLASE_ID, CC2.N_CONTROL_CLASE_ID)    
+    FROM CONTROL_CLASE CC1    
+ LEFT JOIN ALUMNO_ASISTENCIA AA1    
+  ON CC1.N_CONTROL_CLASE_ID = AA1.N_CONTROL_CLASE_ID    
+ LEFT JOIN CONTROL_CLASE CC2    
+  ON CC1.S_CLA_CODIGO = CC2.S_CLA_CODIGO    
+    AND CC1.D_COCL_FECHA = CC2.D_COCL_FECHA    
+       AND CC1.D_COCL_CLASE_INICIOT = CC2.D_COCL_CLASE_INICIOT    
+       AND CC1.S_TRA_CODIGO = CC2.S_TRA_CODIGO    
+    WHERE CC1.N_CONTROL_CLASE_ID = @N_CONTROL_CLASE_ID;    
+    
+    IF @N_CONTROL_CLASE_ID_AUX IS NOT NULL    
+    BEGIN    
+        SET @N_CONTROL_CLASE_ID = @N_CONTROL_CLASE_ID_AUX;    
+    END;    
+    
+    ---------------------------------------------------------    
+    -- DATOS BASE DE LA CLASE    
+    ---------------------------------------------------------    
+    SELECT    
+        @CLASE = CC.S_CLA_CODIGO,    
+        @S_TRA_CODIGO = CC.S_TRA_CODIGO,    
+        @NRO_DIA = DATEPART(DW, CC.D_COCL_FECHA),    
+        @FECHA = CC.D_COCL_FECHA,    
+        @FECHA_HORA_INICIO_PROGRAMADO = CC.D_COCL_CLASE_INICIOT,    
+        @HINI = CAST(    
+            '1899-12-30 '    
+            + CAST(DATEPART(HOUR, CC.D_COCL_CLASE_INICIOT) AS VARCHAR)    
+            + ':'    
+            + CAST(DATEPART(MINUTE, CC.D_COCL_CLASE_INICIOT) AS VARCHAR)    
+            + ':'    
+            + CAST(DATEPART(SECOND, CC.D_COCL_CLASE_INICIOT) AS VARCHAR)    
+            AS DATETIME    
+        ),    
+        @SEMESTRE = C.N_SEMESTRE_ID,    
+        @COD_SEMESTRE = S.S_SEM_CODIGO,    
+  @SEM_TIPO = S.S_SEM_TIPO,    
+        @N_SEDE_ID = S.N_SEDE_ID,    
+  @S_HOR_TIPO_REUNION = CC.S_HOR_TIPO_REUNION    
+    FROM CONTROL_CLASE CC    
+    INNER JOIN CLASE C    
+  ON C.S_CLA_CODIGO = CC.S_CLA_CODIGO    
+    INNER JOIN SEMESTRE S    
+  ON S.N_SEMESTRE_ID = C.N_SEMESTRE_ID    
+       AND S.N_SEM_ESTADO = 1    
+    WHERE CC.N_CONTROL_CLASE_ID = @N_CONTROL_CLASE_ID;    
+    
+    ---------------------------------------------------------    
+    -- FECHA DE CONTROL DEL SEMESTRE    
+    ---------------------------------------------------------    
+    --SELECT    
+    --    @FECHA_CONTROL = S.D_SEM_FINICIO    
+    --FROM SEMESTRE S    
+    --WHERE S.N_SEMESTRE_ID = @SEMESTRE;    
+    
+    ---------------------------------------------------------    
+    -- CLASE PRINCIPAL    
+    ---------------------------------------------------------    
+    --INSERT INTO @TCLASE    
+    --(    
+    --    S_CLA_CODIGO    
+    --)    
+    --VALUES    
+    --(    
+    --    @CLASE    
+    --);    
+    
+    ---------------------------------------------------------    
+    -- CLASES COMBINADAS    
+    ---------------------------------------------------------    
+ --INSERT INTO @TCLASE    
+ --(    
+ -- S_CLA_CODIGO    
+ --)    
+ --SELECT Valor    
+ --FROM dbo.Split(    
+ --(    
+ -- SELECT PC.S_CLA_COM    
+ -- FROM PROGRAMACION_CLASES PC    
+ -- WHERE PC.N_SEMESTRE_ID = @SEMESTRE    
+ --   AND PC.S_TRA_CODIGO = @S_TRA_CODIGO    
+ --   AND PC.S_CLA_CODIGO = @CLASE    
+ --   AND PC.D_HOR_FECHA = @FECHA    
+ --   AND PC.D_COCL_CLASE_INICIOT = @FECHA_HORA_INICIO_PROGRAMADO    
+ --), ',')    
+ --WHERE ISNULL(Valor, '') <> '';    
+    
+    ---------------------------------------------------------    
+    -- VALIDAR CLASES EXISTENTES EN HORARIO    
+    ---------------------------------------------------------    
+    INSERT INTO @TEMCLASE    
+    (    
+        S_CLA_CODIGO,    
+        S_CLA_TIPO    
+    )    
+    SELECT    
+        HC.S_CLA_CODIGO,    
+        HC.S_HOR_TIPO_REUNION    
+    FROM HORARIO_CLASE HC    
+ --INNER JOIN @TCLASE TC    
+ -- ON TC.S_CLA_CODIGO = HC.S_CLA_CODIGO    
+    WHERE HC.S_CLA_CODIGO = @CLASE     
+   AND HC.D_HOR_FECHA = @FECHA;    
+    
+    --IF EXISTS (SELECT 1 FROM @TEMCLASE)    
+    --BEGIN    
+    --    DELETE TC    
+    --    FROM @TCLASE TC    
+    --    WHERE TC.S_CLA_CODIGO NOT IN    
+    --    (    
+    --        SELECT S_CLA_CODIGO    
+    --        FROM @TEMCLASE    
+    --    );    
+    --END;    
+    
+    ---------------------------------------------------------    
+    -- DATOS DPI    
+    ---------------------------------------------------------    
+    DECLARE @tDpi TABLE    
+    (    
+        S_ALU_CODIGO VARCHAR(18),    
+        PORCENTAJE_TEXTO VARCHAR(50),    
+        B_APLICA_DPI BIT    
+    );    
+    
+    INSERT INTO @tDpi    
+    EXEC PA_DPI_GET_INASISTENCIA_PLANILLA @N_CONTROL_CLASE_ID;    
+    
+    ---------------------------------------------------------    
+    -- CONSULTA FINAL    
+    ---------------------------------------------------------    
+    ;WITH ASISTENCIA AS    
+    (    
+        SELECT    
+            AA.N_CONTROL_CLASE_ID,    
+            AA.S_ALU_CODIGO,    
+            AA.S_CLA_CODIGO,    
+            AA.S_CUR_CODIGO,    
+            AA.D_ALAS_FECHA,    
+            AA.S_ALAS_CONTROL,    
+            AA.N_SEMESTRE_ID    
+        FROM V_ALUMNO_ASISTENCIA_SEM AA    
+  --WHERE AA.S_CLA_CODIGO IN    
+  --(    
+  -- SELECT TC.S_CLA_CODIGO    
+  -- FROM @TCLASE TC    
+  --)    
+  --  AND AA.D_ALAS_FECHA >= @FECHA_CONTROL    
+  WHERE AA.S_CLA_CODIGO = @CLASE    
+    ),    
+    PLANTILLA AS    
+    (    
+        SELECT    
+            TC.S_CLA_TIPO,    
+            A.S_ALU_CODIGO,    
+            A.S_ALU_APATERNO,    
+            A.S_ALU_AMATERNO,    
+            A.S_ALU_NOMBRES,    
+            C.S_CAR_NOMBRE,    
+            MD.N_MADE_NRO_VECES,    
+            CASE    
+                WHEN NULLIF(TRIM(AA.S_ALAS_CONTROL), '') IS NOT NULL THEN TRIM(AA.S_ALAS_CONTROL)    
+                WHEN MD.S_MADE_ESTADO = 'RET' OR ISNULL(AN.B_ALNO_SANCION, 0) = 1 THEN ''    
+                ELSE 'P'    
+            END AS ASISTENCIA,    
+            MD.S_CLA_CODIGO,    
+            (    
+                SELECT COUNT(1)    
+                FROM ASISTENCIA AX    
+                WHERE AX.S_ALU_CODIGO = MD.S_ALU_CODIGO    
+      AND AX.S_CLA_CODIGO = MD.S_CLA_CODIGO    
+      AND AX.S_ALAS_CONTROL = 'A'    
+            ) AS N_NRO_FALTAS,    
+            MD.S_MADE_ESTADO,    
+            MD.S_SEM_CODIGO,    
+            CASE    
+                WHEN AN.B_ALNO_SANCION = 1 THEN 1    
+                ELSE 0    
+            END AS ALUMNO_SANCION,    
+            CD.N_DELEGADO_ID,    
+            ISNULL(CAST(CD.B_ESTADO AS INT), 0) AS B_ESTADO    
+        FROM MATRICULA_DETALLE MD    
+  INNER JOIN ALUMNO A    
+   ON A.S_ALU_CODIGO = MD.S_ALU_CODIGO    
+        INNER JOIN CARRERA C    
+   ON C.S_CAR_CODIGO = MD.S_CAR_CODIGO    
+        INNER JOIN CLASE CLA    
+            ON CLA.S_CLA_CODIGO = MD.S_CLA_CODIGO    
+        INNER JOIN @TEMCLASE TC    
+            ON TC.S_CLA_CODIGO = MD.S_CLA_CODIGO    
+     AND TC.S_CLA_TIPO = @S_HOR_TIPO_REUNION    
+        LEFT JOIN ASISTENCIA AA    
+            ON AA.N_CONTROL_CLASE_ID = @N_CONTROL_CLASE_ID    
+           AND AA.S_CLA_CODIGO = MD.S_CLA_CODIGO    
+           AND AA.S_ALU_CODIGO = MD.S_ALU_CODIGO    
+        LEFT JOIN ALUMNO_NOTA AN    
+            ON AN.S_ALU_CODIGO = MD.S_ALU_CODIGO    
+           AND AN.S_CLA_CODIGO =    
+           (    
+    CASE    
+     WHEN CLA.S_CLA_CODIGO_PADRE IS NULL THEN CLA.S_CLA_CODIGO    
+                    ELSE CLA.S_CLA_CODIGO_PADRE    
+                END    
+           )    
+        LEFT JOIN CLASE_DELEGADO CD    
+   ON CD.S_ALU_CODIGO = MD.S_ALU_CODIGO    
+           AND CD.S_CLA_CODIGO = MD.S_CLA_CODIGO    
+  --WHERE MD.S_CLA_CODIGO IN    
+        --(    
+        --    SELECT TC.S_CLA_CODIGO    
+        --    FROM @TCLASE TC    
+        --)    
+  WHERE MD.S_CLA_CODIGO = @CLASE    
+    ),    
+    FECHA_MATRICULA AS    
+    (    
+        SELECT    
+            X.S_ALU_CODIGO,    
+            X.D_MAT_FECHA,    
+            X.S_ALU_CODIGO_APRENDIZAJE    
+        FROM    
+        (    
+            SELECT    
+                M.S_ALU_CODIGO,    
+                M.D_MAT_FECHA,    
+                M.S_ALU_CODIGO_APRENDIZAJE,    
+                ROW_NUMBER() OVER    
+                (    
+                    PARTITION BY M.S_ALU_CODIGO    
+                    ORDER BY M.D_MAT_FECHA DESC    
+                ) AS RN    
+            FROM MATRICULA M    
+        ) X    
+        WHERE X.RN = 1    
+    )    
+    SELECT DISTINCT    
+        P.S_ALU_CODIGO,    
+  ISNULL((SELECT s_aldaus_cod_alumno FROM alumno_datos_usuario ADU WHERE ADU.s_alu_codigo = P.S_ALU_CODIGO AND ADU.s_aldaus_nivel = @SEM_TIPO),'-') AS S_ALU_SOCRATES,    
+        P.S_ALU_APATERNO,    
+        P.S_ALU_AMATERNO,    
+        P.S_ALU_NOMBRES,    
+        P.S_CAR_NOMBRE,    
+        P.N_MADE_NRO_VECES,    
+        P.ASISTENCIA,    
+        P.S_CLA_CODIGO,    
+        P.N_NRO_FALTAS,    
+        P.S_MADE_ESTADO,    
+        FM.D_MAT_FECHA,    
+        FM.S_ALU_CODIGO_APRENDIZAJE,    
+        ISNULL(R.B_ARS_ESTADO, 0) AS B_ARS_ESTADO,    
+        P.S_CLA_TIPO,    
+        P.ALUMNO_SANCION,    
+        P.N_DELEGADO_ID,    
+        P.B_ESTADO,    
+        ISNULL(DPI.PORCENTAJE_TEXTO, '-')   AS PORCENTAJE_TEXTO,    
+        ISNULL(DPI.B_APLICA_DPI, 0)         AS B_APLICA_DPI  
+    FROM PLANTILLA P    
+    INNER JOIN FECHA_MATRICULA FM    
+        ON FM.S_ALU_CODIGO = P.S_ALU_CODIGO    
+    LEFT JOIN @TRETIROS R    
+        ON R.S_ALU_CODIGO = P.S_ALU_CODIGO    
+    LEFT JOIN @tDpi DPI    
+        ON DPI.S_ALU_CODIGO = P.S_ALU_CODIGO    
+    ORDER BY P.S_ALU_APATERNO;    
+END;    
